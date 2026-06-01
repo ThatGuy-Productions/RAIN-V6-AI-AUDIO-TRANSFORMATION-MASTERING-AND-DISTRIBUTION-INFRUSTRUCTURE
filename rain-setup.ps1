@@ -97,7 +97,6 @@ AFTER SETUP:
     Cache:     localhost:6379
 
 For more info, see: https://github.com/aurorav5/RAIN-MASTERING-DISTRIBUTION-ENGINE/wiki
-
 "@
     Write-Host $help
 }
@@ -127,13 +126,6 @@ function Check-Requirements {
     } else {
         $dockerVersion = & docker --version
         Write-Success $dockerVersion
-    }
-
-    # Check Docker Compose
-    if (-not (Get-Command docker-compose -ErrorAction SilentlyContinue)) {
-        if (-not (& docker compose version 2>$null)) {
-            $missing += "docker-compose"
-        }
     }
 
     # Check disk space (C: drive, minimum 20 GB)
@@ -434,7 +426,6 @@ Next Steps:
   4. Explore the mastering pipeline!
 
 For support, see: https://github.com/aurorav5/RAIN-MASTERING-DISTRIBUTION-ENGINE/issues
-
 "@
     Write-Host $info -ForegroundColor Green
 }
