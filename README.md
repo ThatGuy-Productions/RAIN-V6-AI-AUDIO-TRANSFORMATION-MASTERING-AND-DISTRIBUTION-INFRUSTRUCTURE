@@ -33,7 +33,7 @@ Beyond LANDR. Beyond iZotope. Beyond anything that came before.
 │  Backend  (Python 3.12 · FastAPI · Celery · Structlog)              │
 │  ┌──────────────┐ ┌────────────┐ ┌─────────────┐ ┌──────────────┐  │
 │  │ Master Engine│ │ QC Engine  │ │ RAIN-CERT   │ │ DDEX ERN 4.3 │  │
-│  │ 10-stage DSP │ │ 18 checks  │ │ Ed25519     │ │ AI disclosure │  │
+│  │ 16-stage DSP │ │ 18 checks  │ │ Ed25519     │ │ AI disclosure │  │
 │  └──────────────┘ └────────────┘ └─────────────┘ └──────────────┘  │
 │  ┌──────────────┐ ┌────────────┐ ┌─────────────┐ ┌──────────────┐  │
 │  │ Feature Ext. │ │ Heuristic  │ │ LabelGrid   │ │ Stripe       │  │
