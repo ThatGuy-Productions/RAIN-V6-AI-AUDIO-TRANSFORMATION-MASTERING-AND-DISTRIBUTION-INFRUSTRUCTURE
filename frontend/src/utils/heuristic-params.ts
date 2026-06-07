@@ -15,7 +15,7 @@ import type { ProcessingParams } from '../types/dsp'
 
 /**
  * Canonical ProcessingParams with all defaults per CLAUDE.md.
- * Must match backend default_params() exactly.
+ * Must match backend BASE_PARAMS in ml/rainnet/heuristics.py exactly.
  */
 function defaultParams(): ProcessingParams {
   return {
@@ -23,10 +23,10 @@ function defaultParams(): ProcessingParams {
     target_lufs: -14.0,
     true_peak_ceiling: -1.0,
 
-    // Multiband dynamics (3-band: low/mid/high)
-    mb_threshold_low: -18.0,
-    mb_threshold_mid: -15.0,
-    mb_threshold_high: -12.0,
+    // Multiband dynamics (3-band: low/mid/high) — match backend BASE_PARAMS
+    mb_threshold_low: -20.0,
+    mb_threshold_mid: -18.0,
+    mb_threshold_high: -16.0,
     mb_ratio_low: 2.5,
     mb_ratio_mid: 2.0,
     mb_ratio_high: 2.0,
@@ -70,8 +70,9 @@ function defaultParams(): ProcessingParams {
 }
 
 /**
- * Genre-specific overrides. Must match backend GENRE_OVERRIDES exactly.
- * Keys and values are 1:1 with backend/app/services/heuristic_params.py.
+ * Genre-specific overrides. AUTHORITATIVE SOURCE: ml/rainnet/heuristics.py GENRE_PRESETS.
+ * Values here MUST be identical to the backend for the same genre.
+ * The backend uses a preset merge approach — these overrides produce the same final result.
  */
 /**
  * Genre-specific overrides. AUTHORITATIVE SOURCE: ml/rainnet/heuristics.py (Phil's version).
@@ -188,15 +189,16 @@ export function generateHeuristicParams(
 ): ProcessingParams {
   const params = defaultParams()
 
-  // Apply platform target
+  // Apply platform target (matches backend get_heuristic_params logic)
   const target = PLATFORM_TARGETS[platform] ?? DEFAULT_PLATFORM
   params.target_lufs = target.target_lufs
-  params.true_peak_ceiling = target.true_peak_ceiling
 
-  // Vinyl mode
+  // Vinyl mode override — matches backend: vinyl gets -3.0 dBTP
   if (platform === 'vinyl') {
     params.vinyl_mode = true
     params.true_peak_ceiling = -3.0
+  } else {
+    params.true_peak_ceiling = target.true_peak_ceiling
   }
 
   // Apply genre overrides

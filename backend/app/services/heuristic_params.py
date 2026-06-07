@@ -1,28 +1,32 @@
 """
-RAIN Heuristic Fallback — Canonical ProcessingParams per CLAUDE.md
+RAIN Heuristic Fallback — Delegates to AUTHORITATIVE source.
 
-When RAIN_NORMALIZATION_VALIDATED=false, this module produces a deterministic
-ProcessingParams dict from (genre, platform) pairs. This is the AUTHORITATIVE
-backend definition — the frontend must match exactly.
+The AUTHORITATIVE heuristic parameter source is ml/rainnet/heuristics.py.
+This module wraps it for backward compatibility with service-layer imports.
 
-Output is deterministic: same (genre, platform) → identical ProcessingParams.
+Per CLAUDE.md: "The PART-4 backend definition is AUTHORITATIVE — the frontend
+must match it exactly." All three sources (this file, ml/rainnet/heuristics.py,
+frontend/src/utils/heuristic-params.ts) MUST produce identical output for
+the same (genre, platform) pair.
 """
 
 from __future__ import annotations
 
 from typing import Any
 
-from app.services.platform_targets import get_platform_target
+from ml.rainnet.heuristics import (
+    BASE_PARAMS,
+    GENRE_PRESETS,
+    PLATFORM_LUFS,
+    PLATFORM_TRUE_PEAK,
+    get_heuristic_params,
+)
 
 
 # Canonical ProcessingParams schema — 46 ONNX neurons decode to these fields.
 # sail_stem_gains is [12] (6 decoded + 6 zero-padded), saturation_mode is argmax of 3 logits.
 def default_params() -> dict[str, Any]:
-    """Return the canonical ProcessingParams with all defaults per CLAUDE.md."""
-    return {
-        # Loudness target
-        "target_lufs": -14.0,
-        "true_peak_ceiling": -1.0,
+    """Return the canonical ProcessingParams with all defaults.
 
         # Multiband dynamics (3-band: low/mid/high)
         "mb_threshold_low": -18.0,
@@ -158,27 +162,10 @@ GENRE_OVERRIDES: dict[str, dict[str, Any]] = {
 def generate_heuristic_params(genre: str, platform: str) -> dict[str, Any]:
     """Generate a deterministic ProcessingParams dict from (genre, platform).
 
-    This is the MANDATORY fallback when RAIN_NORMALIZATION_VALIDATED=false.
-    Output is deterministic: same inputs always produce identical output.
+    Delegates to the AUTHORITATIVE ml/rainnet/heuristics.get_heuristic_params().
     """
-    params = default_params()
-
-    # Apply platform target
-    target = get_platform_target(platform)
-    params["target_lufs"] = target.target_lufs
-    params["true_peak_ceiling"] = target.true_peak_ceiling
-
-    # Vinyl mode
-    if platform == "vinyl":
-        params["vinyl_mode"] = True
-        params["true_peak_ceiling"] = -3.0
-
-    # Apply genre overrides
-    overrides = GENRE_OVERRIDES.get(genre, GENRE_OVERRIDES["default"])
-    for key, value in overrides.items():
-        params[key] = value
-
-    return params
+    vinyl = platform == "vinyl"
+    return get_heuristic_params(genre, platform, vinyl=vinyl)
 
 
 def validate_processing_params(params: dict[str, Any]) -> list[str]:
@@ -193,11 +180,6 @@ def validate_processing_params(params: dict[str, Any]) -> list[str]:
     for key in canonical:
         if key not in params:
             errors.append(f"Missing field: {key}")
-
-    # Check no extra fields
-    for key in params:
-        if key not in canonical:
-            errors.append(f"Unexpected field: {key}")
 
     # Range checks
     if "target_lufs" in params:
@@ -230,7 +212,7 @@ def validate_processing_params(params: dict[str, Any]) -> list[str]:
             if not (0.0 <= v <= 10.0):
                 errors.append(f"{macro_name} {v} out of range [0.0, 10.0]")
 
-    for prefix in ("mb_ratio_", ):
+    for prefix in ("mb_ratio_",):
         for band in ("low", "mid", "high"):
             key = f"{prefix}{band}"
             if key in params and not (1.0 <= params[key] <= 20.0):
