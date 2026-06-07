@@ -36,19 +36,6 @@ _MAGIC_SIGNATURES: list[tuple[bytes, int]] = [
     (b"ftypM4A ", 4),    # M4A — ftyp at offset 4 (variable box size)
 ]
 
-
-def _validate_magic_bytes(data: bytes) -> bool:
-    """Return True if data starts with a recognised audio magic signature."""
-    for signature, offset in _MAGIC_SIGNATURES:
-        end = offset + len(signature)
-        if len(data) >= end and data[offset:end] == signature:
-            return True
-    # M4A: ftyp box can appear at offset 4 with any 4-byte size prefix
-    if len(data) >= 12 and data[4:8] == b"ftyp":
-        return True
-    return False
-
-
 @router.post("/", response_model=Union[SessionResponse, FreeSessionResponse], status_code=201)
 @limiter.limit(dynamic_limit)
 async def create_session(
