@@ -4,11 +4,17 @@ from io import BytesIO
 from typing import Tuple
 import numpy as np
 import structlog
+import asyncio
+from concurrent.futures import ProcessPoolExecutor
+from functools import partial
 
 logger = structlog.get_logger()
 
+# Global process pool to avoid locking the Python GIL during heavy audio analysis
+# on the API request path.
+_process_pool = ProcessPoolExecutor(max_workers=2)
 
-def extract_mel_spectrogram(
+def extract_mel_spectrogram_sync(
     audio_data: bytes,
     sr_target: int = 48000,
     n_mels: int = 128,
@@ -50,12 +56,32 @@ def extract_mel_spectrogram(
     return mel_norm.astype(np.float32)[:, :n_frames], duration, float(sr)
 
 
-async def measure_lufs_true_peak(audio_data: bytes) -> tuple[float, float]:
-    """
-    Measure integrated LUFS and true peak from raw audio bytes.
-    Returns (integrated_lufs, true_peak_dbtp).
-    Uses pyloudnorm for LUFS and soundfile for peak measurement.
-    """
+async def extract_mel_spectrogram(
+    audio_data: bytes,
+    sr_target: int = 48000,
+    n_mels: int = 128,
+    n_frames: int = 128,
+    hop_length: int = 512,
+    n_fft: int = 2048,
+) -> Tuple[np.ndarray, float, float]:
+    """Asynchronous wrapper for mel spectrogram extraction using ProcessPoolExecutor."""
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(
+        _process_pool,
+        partial(
+            extract_mel_spectrogram_sync,
+            audio_data,
+            sr_target,
+            n_mels,
+            n_frames,
+            hop_length,
+            n_fft
+        )
+    )
+
+
+def measure_lufs_true_peak_sync(audio_data: bytes) -> tuple[float, float]:
+    """Synchronous implementation of LUFS/Peak measurement."""
     import soundfile as sf
     import pyloudnorm as pyln
     import numpy as np
@@ -67,3 +93,16 @@ async def measure_lufs_true_peak(audio_data: bytes) -> tuple[float, float]:
     true_peak_linear = float(np.max(np.abs(audio)))
     true_peak_dbtp = 20.0 * np.log10(true_peak_linear) if true_peak_linear > 0 else -120.0
     return float(loudness), float(true_peak_dbtp)
+
+
+async def measure_lufs_true_peak(audio_data: bytes) -> tuple[float, float]:
+    """
+    Measure integrated LUFS and true peak from raw audio bytes.
+    Offloaded to a ProcessPoolExecutor to avoid blocking the API event loop.
+    Returns (integrated_lufs, true_peak_dbtp).
+    """
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(
+        _process_pool, 
+        partial(measure_lufs_true_peak_sync, audio_data)
+    )

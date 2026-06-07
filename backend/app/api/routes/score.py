@@ -48,7 +48,7 @@ async def public_rain_score(
     try:
         from app.services.rain_score import compute_rain_score
         from app.services.audio_analysis import extract_mel_spectrogram
-        mel, duration, sr = extract_mel_spectrogram(data)
+        mel, duration, sr = await extract_mel_spectrogram(data)
         score = await compute_rain_score(data, platform, mel)
         return {
             "score": score,

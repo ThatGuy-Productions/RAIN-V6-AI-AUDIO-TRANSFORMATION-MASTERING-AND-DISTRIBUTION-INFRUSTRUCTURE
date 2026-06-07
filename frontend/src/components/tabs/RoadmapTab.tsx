@@ -61,7 +61,7 @@ const ROADMAP: RoadmapItem[] = [
   },
   {
     version: 'v7.0',
-    title: 'Studio',
+    title: 'Studio Pro',
     status: 'exploring',
     items: [
       'Tauri desktop application',

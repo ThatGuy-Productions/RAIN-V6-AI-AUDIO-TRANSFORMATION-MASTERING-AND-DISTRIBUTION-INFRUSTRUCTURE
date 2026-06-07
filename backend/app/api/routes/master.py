@@ -18,9 +18,11 @@ from pathlib import Path
 from typing import Any
 
 import structlog
-from fastapi import APIRouter, File, HTTPException, Request, UploadFile
+from fastapi import APIRouter, File, HTTPException, Request, UploadFile, Depends
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
+
+from app.api.dependencies import get_current_user, CurrentUser, require_tier
 
 from app.core.config import settings
 from app.services.master_engine import (
@@ -143,7 +145,11 @@ class ProcessResponse(BaseModel):
 
 
 @router.post("/upload", response_model=UploadResponse)
-async def upload_audio(request: Request, file: UploadFile = File(...)) -> UploadResponse:
+async def upload_audio(
+    request: Request,
+    file: UploadFile = File(...),
+    current_user: CurrentUser = Depends(require_tier("free", "spark", "creator", "artist", "studio_pro", "enterprise"))
+) -> UploadResponse:
     """Upload an audio file for mastering. Returns session_id for subsequent operations."""
     client_ip = request.client.host if request.client else "unknown"
     _check_upload_rate_limit(client_ip)
@@ -213,7 +219,10 @@ async def upload_audio(request: Request, file: UploadFile = File(...)) -> Upload
 
 
 @router.get("/{session_id}/analysis", response_model=AnalysisResponse)
-async def get_analysis(session_id: str) -> AnalysisResponse:
+async def get_analysis(
+    session_id: str,
+    current_user: CurrentUser = Depends(require_tier("free", "spark", "creator", "artist", "studio_pro", "enterprise"))
+) -> AnalysisResponse:
     """Get analysis results for a session."""
     session = _sessions.get(session_id)
     if not session:
@@ -250,7 +259,11 @@ async def get_analysis(session_id: str) -> AnalysisResponse:
 
 
 @router.post("/{session_id}/process", response_model=ProcessResponse)
-async def process_audio(session_id: str, req: ProcessRequest) -> ProcessResponse:
+async def process_audio(
+    session_id: str,
+    req: ProcessRequest,
+    current_user: CurrentUser = Depends(require_tier("spark", "creator", "artist", "studio_pro", "enterprise"))
+) -> ProcessResponse:
     """Trigger the mastering chain with given parameters and metadata."""
     session = _sessions.get(session_id)
     if not session:
@@ -389,7 +402,11 @@ async def process_audio(session_id: str, req: ProcessRequest) -> ProcessResponse
 
 
 @router.get("/{session_id}/download/{format}")
-async def download_file(session_id: str, format: str) -> FileResponse:
+async def download_file(
+    session_id: str,
+    format: str,
+    current_user: CurrentUser = Depends(require_tier("spark", "creator", "artist", "studio_pro", "enterprise"))
+) -> FileResponse:
     """Download the mastered file as WAV or MP3."""
     session = _sessions.get(session_id)
     if not session:
@@ -422,7 +439,10 @@ async def download_file(session_id: str, format: str) -> FileResponse:
 
 
 @router.get("/{session_id}/features")
-async def get_features(session_id: str) -> dict:
+async def get_features(
+    session_id: str,
+    current_user: CurrentUser = Depends(require_tier("free", "spark", "creator", "artist", "studio_pro", "enterprise"))
+) -> dict:
     """Get 43-dimensional feature vector for an uploaded session."""
     session = _sessions.get(session_id)
     if not session:
@@ -434,7 +454,10 @@ async def get_features(session_id: str) -> dict:
 
 
 @router.get("/{session_id}/cert")
-async def get_rain_cert(session_id: str) -> dict:
+async def get_rain_cert(
+    session_id: str,
+    current_user: CurrentUser = Depends(require_tier("free", "spark", "creator", "artist", "studio_pro", "enterprise"))
+) -> dict:
     """Get RAIN-CERT provenance certificate for a mastered session."""
     session = _sessions.get(session_id)
     if not session:
@@ -446,7 +469,10 @@ async def get_rain_cert(session_id: str) -> dict:
 
 
 @router.get("/{session_id}/c2pa")
-async def get_c2pa_manifest(session_id: str) -> dict:
+async def get_c2pa_manifest(
+    session_id: str,
+    current_user: CurrentUser = Depends(require_tier("free", "spark", "creator", "artist", "studio_pro", "enterprise"))
+) -> dict:
     """Get C2PA v2.2 Content Provenance manifest for EU AI Act Article 50 compliance."""
     session = _sessions.get(session_id)
     if not session:
@@ -458,7 +484,10 @@ async def get_c2pa_manifest(session_id: str) -> dict:
 
 
 @router.get("/{session_id}/qc")
-async def get_qc_report(session_id: str) -> dict:
+async def get_qc_report(
+    session_id: str,
+    current_user: CurrentUser = Depends(require_tier("free", "spark", "creator", "artist", "studio_pro", "enterprise"))
+) -> dict:
     """Get QC report (18 automated checks) for a mastered session."""
     session = _sessions.get(session_id)
     if not session:
@@ -492,7 +521,11 @@ class SpatialRequest(BaseModel):
 
 
 @router.post("/{session_id}/spatial")
-async def apply_spatial(session_id: str, request: Request) -> dict:
+async def apply_spatial(
+    session_id: str,
+    request: Request,
+    current_user: CurrentUser = Depends(require_tier("studio_pro", "enterprise"))
+) -> dict:
     """Apply spatial audio processing to a mastered session.
 
     Supports binaural preview with ITD simulation. Atmos 7.1 requires GPU backend.
@@ -615,7 +648,10 @@ async def apply_spatial(session_id: str, request: Request) -> dict:
 
 
 @router.get("/{session_id}/export/ddp")
-async def export_ddp(session_id: str) -> dict:
+async def export_ddp(
+    session_id: str,
+    current_user: CurrentUser = Depends(require_tier("studio_pro", "enterprise"))
+) -> dict:
     """Export DDP (Disc Description Protocol) image metadata for CD manufacturing.
 
     Returns a JSON descriptor with DDPID and DDPMS content. Full DDP binary export

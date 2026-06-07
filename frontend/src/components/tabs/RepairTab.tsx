@@ -141,7 +141,7 @@ function makeDefaultStates(): Record<string, ToolState> {
 // Badge component
 // ---------------------------------------------------------------------------
 
-function Badge({ kind }: { kind: 'stems' | 'studio-pro' }) {
+function Badge({ kind }: { kind: 'stems' | 'studio_pro' }) {
   if (kind === 'stems') {
     return (
       <span className="flex items-center gap-1 px-1.5 py-0.5 rounded text-[7px] font-mono font-bold tracking-wider bg-[#00D4FF]/10 border border-[#00D4FF]/30 text-[#00D4FF]">

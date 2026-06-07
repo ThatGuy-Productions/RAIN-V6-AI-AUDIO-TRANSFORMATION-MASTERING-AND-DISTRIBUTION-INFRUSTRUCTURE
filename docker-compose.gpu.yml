@@ -2,7 +2,7 @@
 # RAIN GPU-Enabled Docker Compose
 # ============================================
 # Use this on machines with NVIDIA GPUs for accelerated ML inference
-# and stem separation (Demucs, RainNet).
+# and stem separation (BS-RoFormer).
 #
 # Requirements:
 #   - NVIDIA GPU with CUDA 12+ support
@@ -27,7 +27,7 @@ services:
               count: 1
               capabilities: [gpu]
     environment:
-      - DEMUCS_DEVICE=cuda
+      - BS_ROFORMER_DEVICE=cuda
       - NVIDIA_VISIBLE_DEVICES=all
       - CUDA_VISIBLE_DEVICES=0
-    command: celery -A app.worker worker --loglevel=info -Q default,demucs,distribution,certification -c 2
+    command: celery -A app.worker worker --loglevel=info -Q gpu_priority_low,gpu_priority_medium,gpu_priority_high --pool solo --concurrency 1

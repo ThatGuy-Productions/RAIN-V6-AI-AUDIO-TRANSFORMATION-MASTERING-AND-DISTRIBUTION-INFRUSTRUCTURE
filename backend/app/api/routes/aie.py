@@ -109,8 +109,13 @@ async def reference_match(
     from app.models.aie import AIEProfile
     import numpy as np
 
-    data = await file.read()
-    mel, duration, sr = extract_mel_spectrogram(data)
+    try:
+        data = await file.read()
+        if len(data) > 50 * 1024 * 1024:
+            raise HTTPException(400, "Reference file too large (>50MB)")
+        mel, duration, sr = await extract_mel_spectrogram(data)
+    except Exception as e:
+        raise HTTPException(400, detail=str(e))
 
     await db.execute(text("SELECT set_app_user_id(:uid::uuid)"), {"uid": str(current_user.user_id)})
     result = await db.execute(
