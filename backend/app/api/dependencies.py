@@ -66,6 +66,11 @@ async def get_current_user(
     return user
 
 
+async def require_auth(current_user: CurrentUser = Depends(get_current_user)) -> CurrentUser:
+    """Explicit auth requirement for global dependency usage."""
+    return current_user
+
+
 def require_tier(*allowed_tiers: str):
     """Factory for tier-gated endpoints. Accepts str or Tier enum values."""
     allowed = {t.value if isinstance(t, Tier) else t for t in allowed_tiers}

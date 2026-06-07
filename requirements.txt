@@ -1,0 +1,15 @@
+# Core API & AI
+anthropic>=0.40.0
+fastapi>=0.100.0
+uvicorn>=0.23.0
+
+# DSP & Audio
+numpy>=1.24.0
+scipy>=1.10.0
+soundfile>=0.12.0
+librosa>=0.10.0
+
+# ML & Separation
+torch>=2.0.0
+torchaudio>=2.0.0
+music-source-separation-training @ git+https://github.com/facebookresearch/music-source-separation-training.git

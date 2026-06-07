@@ -1,4 +1,4 @@
-from fastapi import FastAPI, Depends, Request
+from fastapi import FastAPI, Depends, Request, APIRouter
 from fastapi.middleware.cors import CORSMiddleware
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
@@ -15,6 +15,7 @@ from app.api.routes import (
     suno_import, score, whitelabel, workspaces, lora,
     master, qc, separate, waitlist, provenance_routes,
 )
+from app.api.dependencies import require_auth
 
 
 # Routers that do NOT require authentication. Everything else is gated globally.
@@ -66,28 +67,32 @@ if settings.RAIN_ENV == "development":
 setup_observability(app)
 
 # Public routes (no auth dependency)
-app.include_router(auth.router, prefix="/api/v1")
-app.include_router(waitlist.router, prefix="/api/v1")
+public_router = APIRouter()
+public_router.include_router(auth.router, prefix="/api/v1")
+public_router.include_router(waitlist.router, prefix="/api/v1")
+public_router.include_router(provenance_routes.router, prefix="/api/v1")
+app.include_router(public_router)
 
-# Auth dependency — only applied in production. In development ALL routes are
-# open so the stack can be exercised without Postgres user records or JWTs.
-_protected_deps = [Depends(get_current_user)] if settings.RAIN_ENV != "development" else []
+# Auth dependency — only applied in production.
+_protected_deps = [Depends(require_auth)] if settings.RAIN_ENV != "development" else []
+protected_router = APIRouter(dependencies=_protected_deps)
 
-app.include_router(upload.router, prefix="/api/v1", dependencies=_protected_deps)
-app.include_router(billing.router, prefix="/api/v1", dependencies=_protected_deps)
-app.include_router(sessions.router, prefix="/api/v1", dependencies=_protected_deps)
-app.include_router(download.router, prefix="/api/v1", dependencies=_protected_deps)
-app.include_router(aie.router, prefix="/api/v1", dependencies=_protected_deps)
-app.include_router(distribution.router, prefix="/api/v1", dependencies=_protected_deps)
-app.include_router(suno_import.router, prefix="/api/v1", dependencies=_protected_deps)
-app.include_router(score.router, prefix="/api/v1", dependencies=_protected_deps)
-app.include_router(whitelabel.router, prefix="/api/v1", dependencies=_protected_deps)
-app.include_router(workspaces.router, prefix="/api/v1", dependencies=_protected_deps)
-app.include_router(lora.router, prefix="/api/v1", dependencies=_protected_deps)
-app.include_router(provenance_routes.router, prefix="/api/v1")
-app.include_router(master.router, prefix="/api/v1", dependencies=_protected_deps)
-app.include_router(qc.router, prefix="/api/v1", dependencies=_protected_deps)
-app.include_router(separate.router, prefix="/api/v1", dependencies=_protected_deps)
+protected_router.include_router(upload.router, prefix="/api/v1")
+protected_router.include_router(billing.router, prefix="/api/v1")
+protected_router.include_router(sessions.router, prefix="/api/v1")
+protected_router.include_router(download.router, prefix="/api/v1")
+protected_router.include_router(aie.router, prefix="/api/v1")
+protected_router.include_router(distribution.router, prefix="/api/v1")
+protected_router.include_router(suno_import.router, prefix="/api/v1")
+protected_router.include_router(score.router, prefix="/api/v1")
+protected_router.include_router(whitelabel.router, prefix="/api/v1")
+protected_router.include_router(workspaces.router, prefix="/api/v1")
+protected_router.include_router(lora.router, prefix="/api/v1")
+protected_router.include_router(master.router, prefix="/api/v1")
+protected_router.include_router(qc.router, prefix="/api/v1")
+protected_router.include_router(separate.router, prefix="/api/v1")
+
+app.include_router(protected_router)
 
 
 @app.on_event("startup")
