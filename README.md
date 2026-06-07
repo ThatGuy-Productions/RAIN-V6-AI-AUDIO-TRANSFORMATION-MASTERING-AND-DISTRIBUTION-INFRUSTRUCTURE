@@ -55,7 +55,7 @@ Same input + same params + same WASM binary = **bit-identical output**, every ti
 
 ### Core Mastering
 
-- **16-stage DSP chain**: format normalization → provenance record → feature extraction → AI inference → reference matching → spectral repair → source separation → per-stem repair → per-stem processing → master bus → loudness targeting → spatial rendering → QC validation → forensics watermark → output packaging
+- **16-stage DSP chain**: format normalization → provenance record → feature extraction → AI inference → reference matching → spectral repair → source separation → per-stem repair → per-stem processing → master bus → loudness targeting → spatial rendering → QC validation → forensics watermark → output packaging → distribution
 - **43-dimensional feature extraction** across 6 groups: Loudness (5), Dynamics (6), Spectral (16), Stereo (7), Transient (5), Tonal (4)
 - **18 automated QC checks** with auto-remediation for critical issues
 - **27 platform loudness targets**: Spotify −14 LUFS, Apple Music −16, Dolby Atmos −18, CD −9, vinyl, broadcast, podcast, and more
