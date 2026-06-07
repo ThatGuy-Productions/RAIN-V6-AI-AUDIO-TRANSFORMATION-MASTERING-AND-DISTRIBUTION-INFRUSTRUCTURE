@@ -20,7 +20,7 @@ processing unless the user explicitly initiates upload for distribution or colla
 ## Engineering Identity
 
 - Author: Phil Weyers Bölke / ARCOVEL Technologies International
-- Repo: github.com/aurorav5/aurora-mastering-engine (being renamed to RAIN)
+- Repo: github.com/ThatGuy-Productions/RAIN-V6-AI-AUDIO-TRANSFORMATION-MASTERING-AND-DISTRIBUTION-INFRUSTRUCTURE
 - Contact: engineering@arcovel.com
 - Document ref: RAIN-MASTER-SPEC-v6.0
 
@@ -89,7 +89,7 @@ These are immutable. Never deviate without explicit written approval from Phil B
 | Object Storage | S3-compatible (MinIO in dev) | |
 | ML Training | PyTorch 2.x | |
 | Source Separation | BS-RoFormer SW cascaded 4-pass pipeline (12-stem) | Cloud GPU |
-| AI Assistant | Anthropic API (claude-opus-4-6) | |
+| AI Assistant | Anthropic API (claude-sonnet-4-6) | |
 | Billing | Stripe | |
 | Desktop App | Tauri 2.0 (Rust + WebView) | Studio Pro+ |
 | DAW Plugin | JUCE 8 (VST3/AU/AAX) | Studio Pro+ |
