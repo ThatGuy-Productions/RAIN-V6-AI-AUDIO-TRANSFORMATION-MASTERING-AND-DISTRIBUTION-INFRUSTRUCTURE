@@ -136,4 +136,3 @@ This plan implements the **RAIN Platform Spec v1.0** against the current `rain/f
 - `frontend/src/components/tabs/ExportTab.tsx` — Wire to 8 format variants
 - `frontend/src/types/dsp.ts` — Update ProcessingParams to 46 fields
 
-## Execution starts with Batch 1.
