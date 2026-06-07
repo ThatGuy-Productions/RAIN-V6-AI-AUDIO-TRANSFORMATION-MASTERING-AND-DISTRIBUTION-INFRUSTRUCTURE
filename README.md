@@ -1,13 +1,10 @@
-# R∞N — RAIN AI Mastering & Distribution Engine
+RAIN AI Mastering & Distribution Engine
 
-**Professional AI-powered mastering and distribution engine by [ThatGuy Productions](mailto:engineering@arcovel.com) · Built on ARCOVEL Technologies International infrastructure**
+**Professional AI-powered mastering and distribution engine by ThatGuy Productions**
 
-> *"Rain doesn't live in the cloud."* The render engine runs on your machine. Audio never leaves your device during processing.
+> "Rain doesn't live in the cloud." The render engine runs on your machine. Audio never leaves your device during processing.
 
----
-
-## What is RAIN?
-
+### What is RAIN?
 RAIN (R∞N) is a full-stack, local-first AI mastering and distribution engine that brings studio-grade audio mastering to independent artists and labels. It combines a deterministic C++/WASM DSP render engine with cloud-based AI inference, cryptographic provenance certificates, and direct streaming platform distribution — all in one product.
 
 **Beyond LANDR. Beyond iZotope. Beyond anything that came before.**
@@ -16,193 +13,37 @@ RAIN (R∞N) is a full-stack, local-first AI mastering and distribution engine t
 
 ## Architecture
 
-```
+```text
 ┌─────────────────────────────────────────────────────────────────┐
 │  Browser (React 19 + Vite 6)                                    │
-│  ┌─────────────┐  ┌──────────────┐  ┌────────────────────────┐ │
-│  │ Web Audio   │  │ ONNX Runtime │  │  RainDSP (C++/WASM)    │ │
-│  │ API (route) │  │ Web (infer.) │  │  64-bit, deterministic  │ │
-│  └─────────────┘  └──────────────┘  └────────────────────────┘ │
+│  ┌─────────────┐  ┌──────────────┐  ┌────────────────────────┐  │
+│  │ Web Audio   │  │ ONNX Runtime │  │  RainDSP (C++/WASM)    │  │
+│  │ API (route) │  │ Web (infer.) │  │  64-bit, deterministic │  │
+│  └─────────────┘  └──────────────┘  └────────────────────────┘  │
 └────────────────────────────┬────────────────────────────────────┘
                              │ REST / WebSocket (FastAPI)
 ┌────────────────────────────▼────────────────────────────────────┐
 │  Backend (Python 3.12 + FastAPI)                                │
-│  ┌──────────────┐  ┌───────────┐  ┌──────────┐  ┌──────────┐  │
-│  │ Master       │  │ QC Engine │  │ RAIN-CERT│  │ DDEX ERN │  │
-│  │ Engine (DSP) │  │ 18 checks │  │ Ed25519  │  │ 4.3.2    │  │
-│  └──────────────┘  └───────────┘  └──────────┘  └──────────┘  │
-│  ┌──────────────┐  ┌───────────┐  ┌──────────┐  ┌──────────┐  │
-│  │ Feature Ext. │  │ Heuristic │  │ LabelGrid│  │ Stripe   │  │
-│  │ 43-dim vector│  │ Params    │  │ Distrib. │  │ Billing  │  │
-│  └──────────────┘  └───────────┘  └──────────┘  └──────────┘  │
+│  ┌──────────────┐  ┌───────────┐  ┌──────────┐  ┌──────────┐    │
+│  │ Master       │  │ QC Engine │  │ RAIN-CERT│  │ DDEX ERN │    │
+│  │ Engine (DSP) │  │ 18 checks │  │ Ed25519  │  │ 4.3.2    │    │
+│  └──────────────┘  └───────────┘  └──────────┘  └──────────┘    │
+│  ┌──────────────┐  ┌───────────┐  ┌──────────┐  ┌──────────┐    │
+│  │ Feature Ext. │  │ Heuristic │  │ LabelGrid│  │ Stripe   │    │
+│  │ 43-dim vector│  │ Params    │  │ Distrib. │  │ Billing  │    │
+│  └──────────────┘  └───────────┘  └──────────┘  └──────────┘    │
 └─────────────────────────────────────────────────────────────────┘
          │                    │                    │
     PostgreSQL 18         Valkey 9.0           MinIO / S3
-```
-
-### Dual-Path Design
-
-| Path | Engine | Precision | Purpose |
-|------|--------|-----------|---------|
-| **Preview** | Web Audio API | 32-bit float | Real-time monitoring, < 50 ms latency |
-| **Render** | RainDSP WASM | 64-bit double | Deterministic, authoritative output |
-
-Same input + same params + same WASM binary = **bit-identical output**, every time.
-
----
-
-## Features
-
-### Core Mastering
-
-- **16-stage DSP chain**: format normalization → provenance record → feature extraction → AI inference → reference matching → spectral repair → source separation → per-stem repair → per-stem processing → master bus → loudness targeting → spatial rendering → QC validation → forensics watermark → output packaging → distribution
-- **43-dimensional feature extraction** across 6 groups: Loudness (5), Dynamics (6), Spectral (16), Stereo (7), Transient (5), Tonal (4)
-- **18 automated QC checks** with auto-remediation for critical issues
-- **27 platform loudness targets**: Spotify −14 LUFS, Apple Music −16, Dolby Atmos −18, CD −9, vinyl, broadcast, podcast, and more
-- **46-parameter ProcessingParams schema** — heuristic fallback when ML gate is closed
-
-### 7 Macro Controls
-
-`BRIGHTEN` / `GLUE` / `WIDTH` / `PUNCH` / `WARMTH` / `SPACE` / `REPAIR`
-
-- Emotionally-resonant, non-technical controls mapping to bounded subsets of the 46 DSP parameters
-- RainNet v2 outputs all 7 macros at indices 39–45 via `sigmoid × 10 → [0.0, 10.0]`
-- Tension-pair warnings (e.g. `BRIGHTEN` + `WARMTH` conflict detection)
-
-### 12-Stem Source Separation
-
-BS-RoFormer SW cascaded 4-pass pipeline (replaces Demucs v4):
-
-| Pass | Model | Output |
-|------|-------|--------|
-| 1 | BS-RoFormer SW | vocals, drums, bass, guitar, piano, other |
-| 2 | MVSep Karaoke | lead vocals + backing vocals |
-| 3 | Spectral band-split | kick, snare, hats, percussion (LarsNet pending) |
-| 4 | anvuew dereverb MelBand RoFormer | room/ambience + dry FX |
-
-- Per-stem gain faders, solo/mute, 12-stem waveform display
-- **SAIL v2** (Stem-Aware Intelligent Limiting) — `sail_stem_gains[12]`, 5 limiter modes, vocal protection
-
-### Provenance & Compliance
-
-- **RAIN-CERT**: Ed25519-signed provenance certificates with strict Pydantic validation — input hash, output hash, WASM binary hash, processing params
-- **Synchronous enforcement gate**: output hash verified _before_ session marked complete (`RAIN-E305` on mismatch, `RAIN-E306` on unsigned cert)
-- **C2PA v2.2**: CBOR-encoded Content Provenance manifests with AI disclosure assertions
-- **AudioSeal**: 16-bit invisible watermarks (Meta, MIT licence) — survives compression and re-encoding
-- **Chromaprint**: Audio fingerprints stored in PostgreSQL for content identification
-- **DDEX ERN 4.3**: Full AI involvement disclosure (September 2025 standard, 5 granular areas)
-- **EU AI Act Article 50**: Machine-readable AI marking; `stamp_output` auto-triggered after every render
-- **Public key endpoint**: `GET /api/v1/provenance/public-key` for independent signature verification
-
-### Distribution
-
-- Direct-to-DSP delivery via LabelGrid API
-- ISRC generation (ISO 3901), UPC/EAN-13 with check digit
-- Per-platform loudness targeting and codec-aware mastering
-- 4-step distribution wizard: Platforms → Metadata → Review → Status
-
-### AI Co-Master Engineer
-
-- **Claude Sonnet 4.6** integration (527-line service with 7-macro DSP mapping)
-- **Intent Engine** (404 lines) — natural language → bounded `ProcessingParams` deltas
-- **7-dimensional perceptual vector space** with conflict handling
-- **Emotion-to-DSP mapping**: aggressive, calm, euphoric, melancholic presets
-- **Voice control**: Web Speech API for hands-free mastering commands
-- **AIAssistantOverlay**: confidence-driven passive detection (`HIGH` → auto+undo / `MED` → indicator)
-- **Track diagnosis**: proactive issue detection + Suno/Udio AI-gen artifact detection
-
-### Artist Identity Engine (AIE)
-
-- **64-dimensional voice vector** (EQ / dynamics / stereo / coloring / genre / meta decomposition)
-- Adaptive EMA: α = 0.90 stable, 0.60 cold-start (personalises after 5 sessions)
-- 10 genre centroids: rock, pop, hiphop, electronic, jazz, classical, metal, country, rnb, folk
-- Observation weights: explicit adjustment 1.0, AI-accepted 0.6, implicit 0.3
-- Exportable as HMAC-SHA256 signed JSON via `GET /api/v1/aie/profile/export`
-
----
-
-## Tech Stack
-
-| Layer | Technology |
-|-------|-----------|
-| Frontend | React 19.2 · Vite 6 · TypeScript 5.5 · Tailwind 4 · Framer Motion 11 |
-| State | Zustand 5 · TanStack Query 5 |
-| Render Engine | RainDSP (C++20 / WASM via Emscripten) |
-| ML Inference | ONNX Runtime Web 1.24 (WebGPU → WASM fallback) |
-| Backend API | FastAPI 0.109+ · Python 3.12 |
-| Database | PostgreSQL 18 with RLS |
-| Cache / Queue | Valkey 9.0 (BSD-3-Clause Redis fork) |
-| Object Storage | S3-compatible (MinIO in dev) |
-| Provenance | Ed25519 · C2PA v2.2 · AudioSeal · Chromaprint · CBOR (RFC 7049) |
-| Separation | BS-RoFormer SW · MelBand RoFormer (auto-download via pip) |
-| Distribution | DDEX ERN 4.3 · LabelGrid API |
-| Billing | Stripe |
-| Desktop | Tauri 2.0 (Studio Pro+) |
-| DAW Plugin | JUCE 8 VST3 / AU / AAX (Studio Pro+) |
-| Analytics | PostHog (optional) |
-| Observability | Prometheus · Grafana · structlog · Sentry |
-
----
-
-## Pricing
-
-| Tier | Price | Renders | Key Features |
-|------|-------|---------|--------------|
-| **Casual** | $0 | 0 (listen only) | WASM mastering, real-time preview, RAIN Score |
-| **Creator** | $9 / mo | 50 downloads | Full-resolution export, WAV / FLAC / MP3, Simple Mode |
-| **Independent Artist** | $29 / mo | 10 renders | Stem separation, Claude AI (10/mo), Artist Identity Engine |
-| **Producer** | $59 / mo | 25 renders | DAW plugin, Distribution Intelligence, RAIN-CERT |
-| **Studio** | $149 / mo | 75 renders | Dolby Atmos, DDEX / DDP, vinyl mastering, collaboration |
-| **Label / Distributor** | $349 / mo | 300 renders | Multi-artist roster, batch processing, LabelGrid direct |
-| **Enterprise** | Custom | Unlimited | Custom RainNet LoRA, white-label API, dedicated support |
-
-Annual discount: ~20%. Contact [engineering@arcovel.com](mailto:engineering@arcovel.com?subject=RAIN%20Enterprise%20Inquiry) for enterprise licensing.
-
----
-
-## Getting Started
-
-### Prerequisites
-
-- Docker Desktop 4.x+
-- Node.js 20+
-- Python 3.12+
-
-### Quickstart (Docker)
-
-```bash
-git clone https://github.com/thatguyproductions/RAIN-MASTERING-DISTRIBUTION-ENGINE.git
-cd RAIN-MASTERING-DISTRIBUTION-ENGINE
+Dual-Path DesignPathEnginePrecisionPurposePreviewWeb Audio API32-bit floatReal-time monitoring, < 50 ms latencyRenderRainDSP WASM64-bit doubleDeterministic, authoritative outputSame input + same params + same WASM binary = bit-identical output, every time.FeaturesCore Mastering16-stage DSP chain: format normalization → provenance record → feature extraction → AI inference → reference matching → spectral repair → source separation → per-stem repair → per-stem processing → master bus → loudness targeting → spatial rendering → QC validation → forensics watermark → output packaging → distribution.43-dimensional feature extraction across 6 groups: Loudness (5), Dynamics (6), Spectral (16), Stereo (7), Transient (5), Tonal (4).18 automated QC checks with auto-remediation for critical issues.27 platform loudness targets: Spotify −14 LUFS, Apple Music −16, Dolby Atmos −18, CD −9, vinyl, broadcast, podcast, and more.46-parameter ProcessingParams schema — heuristic fallback when ML gate is closed.7 Macro ControlsBRIGHTEN / GLUE / WIDTH / PUNCH / WARMTH / SPACE / REPAIREmotionally-resonant, non-technical controls mapping to bounded subsets of the 46 DSP parameters.RainNet v2 outputs all 7 macros at indices 39–45 via sigmoid × 10 → [0.0, 10.0].Tension-pair warnings (e.g., BRIGHTEN + WARMTH conflict detection).12-Stem Source SeparationProtect your authentic human vocal recordings. Upload your AI-reworked structures, separate the stems, and cleanly replace the vocals with your original takes.PassModelOutput1BS-RoFormer SWvocals, drums, bass, guitar, piano, other2MVSep Karaokelead vocals + backing vocals3Spectral band-splitkick, snare, hats, percussion (LarsNet pending)4anvuew dereverb MelBandroom/ambience + dry FXPer-stem gain faders, solo/mute, 12-stem waveform display.SAIL v2 (Stem-Aware Intelligent Limiting) — sail_stem_gains[12], 5 limiter modes, dedicated vocal protection.Provenance & ComplianceRAIN-CERT: Ed25519-signed provenance certificates with strict Pydantic validation (input hash, output hash, WASM binary hash, processing params).Synchronous enforcement gate: Output hash verified before session marked complete (RAIN-E305 on mismatch, RAIN-E306 on unsigned cert).C2PA v2.2: CBOR-encoded Content Provenance manifests with AI disclosure assertions.AudioSeal: 16-bit invisible watermarks (Meta, MIT licence) — survives compression and re-encoding.Chromaprint: Audio fingerprints stored in PostgreSQL for content identification.DDEX ERN 4.3: Full AI involvement disclosure (September 2025 standard, 5 granular areas).EU AI Act Article 50: Machine-readable AI marking; stamp_output auto-triggered after every render.Distribution & IntegrationDirect-to-DSP delivery via LabelGrid API.ISRC generation (ISO 3901), UPC/EAN-13 with check digit.Per-platform loudness targeting and codec-aware mastering.4-step distribution wizard: Platforms → Metadata → Review → Status.AI Co-Master Engineer & Artist Identity Engine (AIE)Claude Sonnet 4.6 integration: Natural language Intent Engine mapping to bounded ProcessingParams deltas.Voice control: Web Speech API for hands-free mastering commands.64-dimensional voice vector: EQ / dynamics / stereo / coloring / genre / meta decomposition.Adaptive EMA: α = 0.90 stable, 0.60 cold-start (personalizes after 5 sessions). Exportable as HMAC-SHA256 signed JSON.Tech StackLayerTechnologyFrontendReact 19.2 · Vite 6 · TypeScript 5.5 · Tailwind 4 · Framer Motion 11StateZustand 5 · TanStack Query 5Render EngineRainDSP (C++20 / WASM via Emscripten)ML InferenceONNX Runtime Web 1.24 (WebGPU → WASM fallback)Backend APIFastAPI 0.109+ · Python 3.12DatabasePostgreSQL 18 with RLSCache / QueueValkey 9.0 (BSD-3-Clause Redis fork)Object StorageS3-compatible (MinIO in dev)ProvenanceEd25519 · C2PA v2.2 · AudioSeal · Chromaprint · CBOR (RFC 7049)SeparationBS-RoFormer SW · MelBand RoFormer (auto-download via pip)DistributionDDEX ERN 4.3 · LabelGrid APIPricingTierPriceRendersKey FeaturesCasual$00 (listen only)WASM mastering, real-time preview, RAIN ScoreCreator$9 / mo50 downloadsFull-resolution export, WAV / FLAC / MP3, Simple ModeIndependent Artist$29 / mo10 rendersStem separation, Claude AI (10/mo), Artist Identity EngineProducer$59 / mo25 rendersDAW plugin, Distribution Intelligence, RAIN-CERTStudio$149 / mo75 rendersDolby Atmos, DDEX / DDP, vinyl mastering, collaborationLabel / Distributor$349 / mo300 rendersMulti-artist roster, batch processing, LabelGrid directEnterpriseCustomUnlimitedCustom RainNet LoRA, white-label API, dedicated supportAnnual discount: ~20%. Contact engineering@thatguy-productions.com for enterprise licensing.Getting StartedPrerequisitesDocker Desktop 4.x+Node.js 20+Python 3.12+Quickstart (Docker)Bashgit clone [https://github.com/thatguyproductions/RAIN-V6-AI-AUDIO-TRANSFORMATION-MASTERING-AND-DISTRIBUTION-INFRUSTRUCTURE.git](https://github.com/thatguyproductions/RAIN-V6-AI-AUDIO-TRANSFORMATION-MASTERING-AND-DISTRIBUTION-INFRUSTRUCTURE.git)
+cd RAIN-V6-AI-AUDIO-TRANSFORMATION-MASTERING-AND-DISTRIBUTION-INFRUSTRUCTURE
 
 # Copy and configure environment
 cp .env.example .env
 
 # Start the full stack (PostgreSQL 18 + Valkey 9.0 + backend + frontend)
 docker compose up --build -d
-```
-
-| Service | URL |
-|---------|-----|
-| Frontend | http://localhost:5173 |
-| Backend API | http://localhost:8000 |
-| API docs (Swagger) | http://localhost:8000/docs |
-| MinIO console | http://localhost:9001 |
-| Grafana | http://localhost:3000 (admin / rain_grafana) |
-
-### GPU Workers & ML Models
-
-```bash
-pip install bs-roformer-infer melband-roformer-infer
-python scripts/download_models.py
-
-# List all 70+ available models
-python scripts/download_models.py --list
-```
-
-### Local Development
-
-```bash
-# Backend
+Local DevelopmentBash# Backend
 cd backend
 pip install -r requirements.txt
 uvicorn app.main:app --reload --port 8000
@@ -211,94 +52,7 @@ uvicorn app.main:app --reload --port 8000
 cd frontend
 npm install
 npm run dev
-```
-
-### Environment Variables
-
-Copy `.env.example` to `.env` and configure:
-
-```env
-# Development defaults (pre-filled in prototype)
-RAIN_ENV=development
-DATABASE_URL=postgresql+asyncpg://rain_app:rain_dev@localhost:5432/rain
-REDIS_URL=redis://localhost:6379/0
-
-# Required for production
-JWT_SECRET_KEY=<openssl rand -hex 32>
-STRIPE_SECRET_KEY=sk_live_...
-STRIPE_WEBHOOK_SECRET=whsec_...
-STRIPE_PRICE_SPARK_MONTHLY=price_...
-STRIPE_PRICE_CREATOR_MONTHLY=price_...
-STRIPE_PRICE_ARTIST_MONTHLY=price_...
-STRIPE_PRICE_STUDIO_PRO_MONTHLY=price_...
-
-# Optional
-RAIN_CERT_SIGNING_KEY=<Ed25519 PEM from C2PA-recognised CA>
-ANTHROPIC_API_KEY=sk-ant-...
-VITE_POSTHOG_KEY=phc_...
-```
-
----
-
-## API Reference
-
-Full interactive docs available at `/docs` when the backend is running.
-
-```
-# Mastering
-POST   /api/v1/master/upload              Upload audio for mastering
-GET    /api/v1/master/{id}/analysis       43-dim feature vector + loudness analysis
-POST   /api/v1/master/{id}/process        Run full mastering chain
-GET    /api/v1/master/{id}/download/wav   WAV 24-bit / 48 kHz
-GET    /api/v1/master/{id}/download/mp3   MP3 320 kbps / 44.1 kHz
-GET    /api/v1/master/{id}/qc             18-check QC report
-GET    /api/v1/master/{id}/cert           RAIN-CERT Ed25519 certificate
-GET    /api/v1/master/{id}/c2pa           C2PA v2.2 manifest
-
-# Provenance
-GET    /api/v1/provenance/public-key      Ed25519 public key (PEM) for cert verification
-
-# Platform targets
-GET    /api/v1/qc/platforms               27 platform loudness targets
-
-# Stem separation
-POST   /api/v1/separate/upload            Queue stem separation job
-WS     /api/v1/separate/{id}/ws           WebSocket progress stream
-GET    /api/v1/separate/{id}/stems        Separated stem download URLs
-
-# Distribution
-POST   /api/v1/releases/                  Create DDEX ERN 4.3.2 release
-
-# Billing
-POST   /api/v1/billing/checkout-session   Stripe checkout
-GET    /api/v1/billing/subscription       Current tier / status
-POST   /api/v1/billing/portal-session     Subscription management portal
-
-# Waitlist
-POST   /api/v1/waitlist/join              Join beta waitlist
-GET    /api/v1/waitlist/count             Total waitlist count
-```
-
----
-
-## Non-Negotiable Architecture Rules
-
-These constraints are immutable. See [`CLAUDE.md`](./CLAUDE.md) for the full specification.
-
-1. **Local-First Processing** — RainDSP WASM is the sole render engine. Audio never reaches S3 on the free path.
-2. **Dual-Path Architecture** — Preview (Web Audio API, 32-bit) and Render (RainDSP, 64-bit) are always separate codepaths. Never merge them.
-3. **Multi-Tenant Isolation** — Every DB query includes `WHERE user_id = $user_id`. Row-Level Security enabled on all tables.
-4. **K-Weighting Sign Convention** — `y = b0·x + b1·x₁ + b2·x₂ − a1·y₁ − a2·y₂`. `a1` stored negative, subtracted. Never change this.
-5. **NORMALIZATION_VALIDATED Gate** — `RAIN_NORMALIZATION_VALIDATED=true`; gate OPEN. RainNet inference active. Heuristic fallback remains available but is no longer the primary path.
-6. **WASM Binary Integrity** — `rain_dsp_wasm_hash` verified at session start. Mismatch = `RAIN-E304`, render blocked.
-7. **Free Tier — No S3** — Free renders live in WASM memory and are discarded on session close. Never written to disk or S3.
-
----
-
-## Project Structure
-
-```
-RAIN-MASTERING-DISTRIBUTION-ENGINE/
+Non-Negotiable Architecture RulesThese constraints are immutable. See CLAUDE.md for the full specification.Local-First Processing — RainDSP WASM is the sole render engine. Audio never reaches S3 on the free path.Dual-Path Architecture — Preview (Web Audio API, 32-bit) and Render (RainDSP, 64-bit) are always separate codepaths. Never merge them.Multi-Tenant Isolation — Every DB query includes WHERE user_id = $user_id. Row-Level Security enabled on all tables.K-Weighting Sign Convention — y = b0·x + b1·x₁ + b2·x₂ − a1·y₁ − a2·y₂. a1 stored negative, subtracted. Never change this.NORMALIZATION_VALIDATED Gate — RAIN_NORMALIZATION_VALIDATED=true; gate OPEN. RainNet inference active.WASM Binary Integrity — rain_dsp_wasm_hash verified at session start. Mismatch = RAIN-E304, render blocked.Free Tier = No S3 — Free renders live in WASM memory and are discarded on session close. Never written to disk or S3.Project StructurePlaintextRAIN-V6-AI-AUDIO-TRANSFORMATION-MASTERING-AND-DISTRIBUTION-INFRUSTRUCTURE/
 ├── backend/                   FastAPI application
 │   ├── app/
 │   │   ├── api/routes/        13 API routers (auth, master, qc, billing, …)
@@ -309,55 +63,11 @@ RAIN-MASTERING-DISTRIBUTION-ENGINE/
 │   └── tests/                 pytest test suite
 ├── frontend/                  React SPA
 │   └── src/
-│       ├── components/        UI components (tabs, layout, controls, audio)
-│       ├── stores/            Zustand stores (auth, session)
-│       ├── utils/             API client, analytics, heuristic params
-│       └── views/             Page-level views (AppLayout, LandingPage, Auth)
 ├── rain-dsp/                  C++20 DSP engine (WASM build via Emscripten)
 ├── rain-desktop/              Tauri 2.0 desktop wrapper
 ├── rain-plugin/               JUCE 8 VST3 / AU / AAX plugin
-├── rain-tests/                Integration and E2E test suite
 ├── ml/                        PyTorch training, ONNX export
-├── models/                    Pre-trained ONNX model weights
 ├── docker/                    Dockerfiles (backend, frontend, worker)
-├── monitoring/                Prometheus + Grafana configuration
-├── nginx/                     Reverse proxy config
-├── scripts/                   Setup, model download, preflight utilities
 ├── CLAUDE.md                  Immutable architecture specification
-├── plan.md                    Implementation plan — all 6 batches complete
-├── BUILD-DESKTOP-EXE.md       Desktop build instructions
-├── docker-compose.yml         Full production stack
-├── docker-compose.gpu.yml     GPU worker stack (BS-RoFormer)
-└── docker-compose.prototype.yml  Lightweight local prototype
-```
-
----
-
-## Compliance
-
-| Standard | Status |
-|----------|--------|
-| EU AI Act Article 50 (effective Aug 2, 2026) | ✅ C2PA v2.2 + DDEX AI disclosure in every export |
-| DDEX ERN 4.3.2 | ✅ Full AI involvement fields per Sep 2025 standard |
-| C2PA v2.2 | ✅ CBOR-encoded manifests, Ed25519 signed |
-| ISO 3901 (ISRC) | ✅ Generated per standard |
-| EBU R 128 / ITU-R BS.1770-4 | ✅ K-weighted LUFS targeting |
-| AES17 True Peak | ✅ 4× oversampling limiter |
-
----
-
-## Open Issues & Known Gates
-
-| Item | Status |
-|------|--------|
-| `RAIN_NORMALIZATION_VALIDATED` | ✅ Open — gate validated by Phil Bölke; RainNet inference active |
-| LarsNet percussion separation (Pass 3) | 🟡 Pending integration |
-| CI smoke job | 🟡 Deferred to separate PR |
-
----
-
-## License
-
-Proprietary — © 2026 ARCOVEL Technologies International. All rights reserved.
-
-Contact [engineering@arcovel.com](mailto:engineering@arcovel.com) for licensing enquiries.
+└── plan.md                    Implementation plan — all 6 batches complete
+ComplianceStandardStatusNotesEU AI Act Article 50✅C2PA v2.2 + DDEX AI disclosure in every exportDDEX ERN 4.3.2✅Full AI involvement fields per Sep 2025 standardC2PA v2.2✅CBOR-encoded manifests, Ed25519 signedISO 3901 (ISRC)✅Generated per standardAES17 True Peak✅4× oversampling limiterLicense: Proprietary — © 2026 ThatGuy Productions. All rights reserved.Contact engineering@thatguy-productions.com for licensing enquiries.
