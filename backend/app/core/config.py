@@ -63,8 +63,6 @@ class Settings(BaseSettings):
     C2PA_SIGNING_KEY_PATH: str = "/etc/rain/c2pa-key.pem"
     AUDIOSEAL_MODEL_PATH: str = "/models/audioseal_generator.pth"
     AUDIOSEAL_KEY_SEED: int = 42  # per-deployment 16-bit message base
-    RAIN_CERT_SIGNING_KEY_PATH: str = "/etc/rain/cert.key"
-    RAIN_WATERMARK_KEY_PATH: str = "/etc/rain/wm.key"
 
     # Separation (BS-RoFormer 4-pass cascade) — GPU worker paths
     BSROFORMER_MODEL_PATH: str = "ml/checkpoints/bs_roformer_sw.ckpt"
