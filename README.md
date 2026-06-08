@@ -22,7 +22,7 @@ Beyond LANDR. Beyond iZotope. Beyond anything that came before.
 
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
-│  Browser  (React 19 + Vite 6 + TypeScript 5.5 + Tailwind 4)        │
+│  Browser  (React 19 + Vite 7 + TypeScript 5.5 + Tailwind 4)        │
 │  ┌──────────────────┐  ┌─────────────────┐  ┌─────────────────────┐ │
 │  │ Web Audio API    │  │ ONNX Runtime Web│  │ RainDSP  C++/WASM  │ │
 │  │ 32-bit preview   │  │ WebGPU → WASM   │  │ 64-bit · deterministic│ │
@@ -142,7 +142,7 @@ Per-stem gain faders, solo/mute, 12-stem waveform display. **SAIL v2** (Stem-Awa
 
 | Layer | Technology |
 |-------|------------|
-| Frontend | React 19.2 · Vite 6 · TypeScript 5.5 · Tailwind 4 · Framer Motion 11 |
+| Frontend | React 19 · Vite 7 · TypeScript 5.5 · Tailwind 4 · Framer Motion 11 |
 | State | Zustand 5 · TanStack Query 5 |
 | Render Engine | RainDSP (C++20 / WASM via Emscripten) · 64-bit · deterministic |
 | ML Inference | ONNX Runtime Web 1.24 (WebGPU → WASM fallback) · RainNet v2 |
@@ -205,6 +205,36 @@ docker compose -f docker-compose.gpu.yml up -d worker
 
 ---
 
+## API Routes
+
+The backend exposes 19 API routers under `/api/v1/`.
+
+| Router | Prefix | Auth | Description |
+|--------|--------|------|-------------|
+| `auth.py` | `/auth` | Public / JWT | Registration, login, JWT refresh, password reset |
+| `upload.py` | `/upload` | JWT | Audio file upload, S3 pre-signed URLs, file validation |
+| `master.py` | `/master` | JWT | Session creation, mastering pipeline trigger, status polling, parameter overrides |
+| `separate.py` | `/separate` | JWT · Creator+ | BS-RoFormer 12-stem separation jobs, stem download |
+| `download.py` | `/download` | JWT | Signed download URLs for rendered masters and stems |
+| `distribution.py` | `/distribution` | JWT · Producer+ | DDEX ERN 4.3.2 package generation, LabelGrid delivery, ISRC/UPC issuance |
+| `billing.py` | `/billing` | JWT | Stripe checkout sessions, subscription management, webhook receiver |
+| `aie.py` | `/aie` | JWT · Artist+ | Artist Identity Engine — vector query, export, reset |
+| `sessions.py` | `/sessions` | JWT | Session history, status, output metadata, RAIN Score retrieval |
+| `qc.py` | `/qc` | JWT | Manual QC re-run, 18-point check report |
+| `provenance_routes.py` | `/provenance` | JWT | RAIN-CERT retrieval, C2PA manifest query, Ed25519 verification |
+| `waitlist.py` | `/waitlist` | Public | Beta waitlist registration |
+| `assist.py` | `/assist` | JWT | Claude AI assistant — intent parsing, macro suggestions, mastering advice, voice command processing |
+| `lora.py` | `/lora` | JWT · Enterprise | Custom LoRA adapter training jobs, model version management, inference switching |
+| `suno_import.py` | `/suno` | JWT | Suno AI track import — fetch by song ID or URL, normalize, queue for mastering |
+| `whitelabel.py` | `/whitelabel` | JWT · Enterprise | White-label API key provisioning, partner branding config, usage metering |
+| `workspaces.py` | `/workspaces` | JWT · Studio+ | Multi-artist workspace management, collaborator roles, shared session access |
+| `score.py` | `/score` | Public (10 req/hr/IP) | Public RAIN Score endpoint — no auth required, returns 0-100 composite quality metric |
+| `waitlist.py` | `/waitlist` | Public | Beta waitlist registration |
+
+> **Auth tiers:** `Public` = no token required · `JWT` = any authenticated user · tier suffixes (Creator+, Artist+, etc.) = minimum subscription required.
+
+---
+
 ## Pricing
 
 | Tier | Price | Renders / mo | Key Features |
@@ -247,19 +277,20 @@ These constraints are immutable. See `CLAUDE.md` for the full specification.
 RAIN-V6-AI-AUDIO-TRANSFORMATION-MASTERING-AND-DISTRIBUTION-INFRUSTRUCTURE/
 ├── backend/                   FastAPI application
 │   ├── app/
-│   │   ├── api/routes/        13 routers: auth, master, qc, billing, separate…
+│   │   ├── api/routes/        19 routers — see API Routes table above
 │   │   ├── core/              config, database, security, observability, audio_io
 │   │   ├── models/            SQLAlchemy ORM models (PostgreSQL 18 + RLS)
 │   │   ├── schemas/           Pydantic request / response schemas
-│   │   └── services/          master_engine, qc_engine, separation, ddex, labelgrid…
+│   │   └── services/          master_engine, qc_engine, rain_score_v2, separation…
 │   └── tests/                 pytest async test suite
-├── frontend/                  React 19 SPA (Vite 6 · TypeScript · Tailwind 4)
+├── frontend/                  React 19 SPA (Vite 7 · TypeScript · Tailwind 4)
 ├── rain-dsp/                  C++20 DSP engine — Emscripten WASM build
 ├── rain-desktop/              Tauri 2.0 desktop wrapper
 ├── rain-plugin/               JUCE 8 VST3 / AU / AAX plugin
 ├── ml/                        PyTorch training, ONNX export, RainNet v2
 ├── docker/                    Dockerfiles (backend, frontend, gpu-worker)
 ├── monitoring/                Prometheus + Grafana dashboards
+├── docs/                      Architecture docs, pipeline specs
 ├── CLAUDE.md                  Immutable architecture specification
 ├── RAIN-BLUEPRINT.md          Full technical blueprint
 └── .env.example               All required environment variables documented
@@ -275,6 +306,7 @@ RAIN-V6-AI-AUDIO-TRANSFORMATION-MASTERING-AND-DISTRIBUTION-INFRUSTRUCTURE/
 | `RAIN-E304` | WASM binary hash mismatch | Set `RAIN_EXPECTED_WASM_HASH` to deployed hash |
 | `RAIN-E305` | Output hash mismatch in RAIN-CERT | Re-render; check CERT signing key |
 | `RAIN-E306` | Session completed without signed cert | Check C2PA key paths in config |
+| `RAIN-E503` | Public score rate limit exceeded | 10 requests/hour per IP — wait or authenticate |
 | `RAIN-E620` | Separation disabled | Set `SEPARATION_ENABLED=true` and provision model checkpoints |
 | `RAIN-E621` | `demix()` not available | Install `music-source-separation-training` on GPU worker |
 | `RAIN-E900` | Claude API auth failure | Check `ANTHROPIC_API_KEY` in env |
