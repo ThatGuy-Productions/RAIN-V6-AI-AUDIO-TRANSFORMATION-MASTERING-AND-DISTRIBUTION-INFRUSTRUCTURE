@@ -34,6 +34,9 @@ class Settings(BaseSettings):
 
     RAIN_NORMALIZATION_VALIDATED: bool = True
     ANTHROPIC_API_KEY: str = ""
+    # Canonical Anthropic model string. Override via env var to switch models
+    # without code changes. Must match a currently-supported claude-* model ID.
+    ANTHROPIC_MODEL: str = "claude-sonnet-4-20250514"
     ONNX_MODEL_PATH: str = "/models/rain_base.onnx"
     GENRE_CLASSIFIER_ENABLED: bool = False
     CODEC_NET_ENABLED: bool = False
