@@ -6,16 +6,21 @@ POST /api/v1/master/{id}/process — Trigger mastering with params + metadata
 POST /api/v1/master/{id}/ai-suggest — Ask Claude for mastering suggestions
 GET  /api/v1/master/{id}/download/{format} — Download mastered WAV or MP3
 GET  /api/v1/master/{id}/analysis — Get analysis results as JSON
+
+NOTE: This route module uses an in-memory session store (_sessions dict) which
+is a prototype artifact. It does not survive process restarts and is not
+shared across multiple worker processes. Migration to DB-backed sessions
+(AsyncSessionLocal + S3) is required before horizontal scaling.
 """
 
 from __future__ import annotations
 
 import os
-import shutil
 import tempfile
 import uuid
 from pathlib import Path
 from typing import Any
+from uuid import UUID
 
 import structlog
 from fastapi import APIRouter, File, HTTPException, Request, UploadFile, Depends
@@ -46,9 +51,10 @@ logger = structlog.get_logger()
 router = APIRouter(prefix="/master", tags=["mastering"])
 
 # In-memory session store for the prototype (no DB dependency)
+# KNOWN LIMITATION: process-local, ephemeral, unbounded. See module docstring.
 _sessions: dict[str, dict[str, Any]] = {}
 
-# Simple IP-based rate limiter for prototype (no auth = no user_id)
+# IP-based upload rate limiter (process-local — acceptable for prototype)
 _upload_timestamps: dict[str, list[float]] = {}
 _UPLOAD_RATE_LIMIT = 10
 _UPLOAD_WINDOW_SECONDS = 60.0
@@ -73,6 +79,23 @@ def _check_upload_rate_limit(client_ip: str) -> None:
     _upload_timestamps[client_ip] = timestamps
 
 
+def _require_session_owner(session_id: str, current_user: CurrentUser) -> dict:
+    """Return session dict if it exists and belongs to current_user.
+
+    Admins bypass the ownership check (needed for support tooling).
+    Raises 404 on missing session (don't leak existence to non-owners).
+    """
+    session = _sessions.get(session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+    if not current_user.is_admin:
+        owner_id = session.get("owner_id")
+        if owner_id is not None and str(owner_id) != str(current_user.user_id):
+            # Return 404 rather than 403 to avoid leaking session existence
+            raise HTTPException(status_code=404, detail="Session not found")
+    return session
+
+
 ALLOWED_EXTENSIONS = {".wav", ".flac", ".aiff", ".aif", ".mp3"}
 MAX_FILE_SIZE = 200 * 1024 * 1024  # 200MB
 
@@ -85,7 +108,6 @@ OUTPUT_DIR.mkdir(exist_ok=True)
 
 class ProcessRequest(BaseModel):
     # Canonical range per CLAUDE.md ProcessingParams schema: [-24.0, -8.0]
-    # (Previous range [-16.0, -9.0] was too narrow — blocked classical, broadcast, podcast)
     target_lufs: float = Field(default=-14.0, ge=-24.0, le=-8.0)
     brightness: float = Field(default=2.0, ge=0.0, le=4.0)
     tightness: float = Field(default=3.0, ge=1.0, le=5.0)
@@ -93,9 +115,7 @@ class ProcessRequest(BaseModel):
     warmth: float = Field(default=0.0, ge=0.0, le=3.0)
     punch: float = Field(default=10.0, ge=1.0, le=30.0)
     air: float = Field(default=1.5, ge=0.0, le=3.0)
-    # Vinyl pre-master mode
     vinyl_mode: bool = False
-    # Metadata
     title: str = ""
     artist: str = ""
     album: str = ""
@@ -123,12 +143,10 @@ class AnalysisResponse(BaseModel):
     sample_rate: int
     channels: int
     duration: float
-    # RAIN v2 analysis additions
     genre: str = "unknown"
     tempo_bpm: float = 120.0
     groove_score: float = 0.5
     transient_sharpness: float = 0.5
-    # Post-mastering (if processed)
     output_lufs: float | None = None
     output_true_peak: float | None = None
     output_dynamic_range: float | None = None
@@ -165,7 +183,6 @@ async def upload_audio(
             detail=f"Unsupported format '{ext}'. Accepted: {', '.join(ALLOWED_EXTENSIONS)}",
         )
 
-    # Read file content
     content = await file.read()
     if len(content) > MAX_FILE_SIZE:
         raise HTTPException(status_code=400, detail="File too large (max 200MB)")
@@ -173,24 +190,21 @@ async def upload_audio(
     session_id = str(uuid.uuid4())
     input_path = str(UPLOAD_DIR / f"{session_id}{ext}")
 
-    # Write to disk
     with open(input_path, "wb") as f:
         f.write(content)
 
-    # Quick analysis for the upload response
     try:
         raw_audio, original_sr = load_audio(input_path)
         audio = normalize_input(raw_audio, original_sr)
         analysis = analyze(audio, INTERNAL_SR, original_sr)
-        # 43-dim feature extraction per RAIN-PLATFORM-SPEC Stage 4
         features = extract_features(audio, INTERNAL_SR)
     except Exception as e:
         os.unlink(input_path)
         logger.error("upload_analysis_failed", error=str(e), session_id=session_id)
         raise HTTPException(status_code=400, detail=f"Could not read audio file: {e}")
 
-    # Store session
     _sessions[session_id] = {
+        "owner_id": current_user.user_id,  # ownership anchor for access control
         "input_path": input_path,
         "filename": file.filename,
         "format": ext.lstrip("."),
@@ -226,10 +240,7 @@ async def get_analysis(
     current_user: CurrentUser = Depends(require_tier("free", "spark", "creator", "artist", "studio_pro", "enterprise"))
 ) -> AnalysisResponse:
     """Get analysis results for a session."""
-    session = _sessions.get(session_id)
-    if not session:
-        raise HTTPException(status_code=404, detail="Session not found")
-
+    session = _require_session_owner(session_id, current_user)
     a: AnalysisResult = session["analysis"]
     result = session.get("result")
 
@@ -267,24 +278,20 @@ async def process_audio(
     current_user: CurrentUser = Depends(require_tier("spark", "creator", "artist", "studio_pro", "enterprise"))
 ) -> ProcessResponse:
     """Trigger the mastering chain with given parameters and metadata."""
-    session = _sessions.get(session_id)
-    if not session:
-        raise HTTPException(status_code=404, detail="Session not found")
+    session = _require_session_owner(session_id, current_user)
 
     if session["status"] == "processing":
         raise HTTPException(status_code=409, detail="Already processing")
 
     session["status"] = "processing"
 
-    # ── Vinyl Pre-Master Mode ────────────────────────────────────────────
-    # Activate when vinyl_mode is explicitly true OR genre is "vinyl"
     is_vinyl = req.vinyl_mode or req.genre.lower() == "vinyl"
     effective_target_lufs = req.target_lufs
-    effective_true_peak_ceiling = -1.0  # default dBTP ceiling
+    effective_true_peak_ceiling = -1.0
 
     if is_vinyl:
-        effective_target_lufs = -14.0       # Conservative LUFS for vinyl
-        effective_true_peak_ceiling = -3.0  # Stricter true-peak ceiling for vinyl cutting
+        effective_target_lufs = -14.0
+        effective_true_peak_ceiling = -3.0
         logger.info(
             "vinyl_mode_activated",
             session_id=session_id,
@@ -313,7 +320,6 @@ async def process_audio(
         "vinyl_mode": is_vinyl,
     }
 
-    # Create output directory for this session
     session_output = str(OUTPUT_DIR / session_id)
     os.makedirs(session_output, exist_ok=True)
 
@@ -333,7 +339,6 @@ async def process_audio(
             metadata=metadata,
         )
 
-        # Write metadata to output files
         write_metadata(
             wav_path=result.output_wav_path,
             mp3_path=result.output_mp3_path,
@@ -343,7 +348,6 @@ async def process_audio(
             output_true_peak=result.output_true_peak,
         )
 
-        # Run QC (18 automated checks) per RAIN-PLATFORM-SPEC Stage 14
         raw_output, _ = load_audio(result.output_wav_path)
         output_audio = normalize_input(raw_output, INTERNAL_SR)
         platform_slug = req.genre if req.genre in ("vinyl", "podcast") else "spotify"
@@ -354,7 +358,6 @@ async def process_audio(
         )
         session["qc_report"] = qc_report
 
-        # RAIN-CERT provenance chain (Stage 15)
         rain_cert = create_rain_cert(
             session_id=session_id,
             source_file_path=session["input_path"],
@@ -365,7 +368,6 @@ async def process_audio(
         )
         session["rain_cert"] = rain_cert
 
-        # C2PA manifest (EU AI Act Article 50)
         c2pa = create_c2pa_manifest(
             title=metadata.get("title", ""),
             artist=metadata.get("artist", ""),
@@ -410,9 +412,7 @@ async def download_file(
     current_user: CurrentUser = Depends(require_tier("spark", "creator", "artist", "studio_pro", "enterprise"))
 ) -> FileResponse:
     """Download the mastered file as WAV or MP3."""
-    session = _sessions.get(session_id)
-    if not session:
-        raise HTTPException(status_code=404, detail="Session not found")
+    session = _require_session_owner(session_id, current_user)
 
     if session["status"] != "complete":
         raise HTTPException(status_code=400, detail="Mastering not complete")
@@ -446,9 +446,7 @@ async def get_features(
     current_user: CurrentUser = Depends(require_tier("free", "spark", "creator", "artist", "studio_pro", "enterprise"))
 ) -> dict:
     """Get 43-dimensional feature vector for an uploaded session."""
-    session = _sessions.get(session_id)
-    if not session:
-        raise HTTPException(status_code=404, detail="Session not found")
+    session = _require_session_owner(session_id, current_user)
     features: FeatureVector = session.get("features")
     if not features:
         raise HTTPException(status_code=400, detail="Features not yet extracted")
@@ -461,9 +459,7 @@ async def get_rain_cert(
     current_user: CurrentUser = Depends(require_tier("free", "spark", "creator", "artist", "studio_pro", "enterprise"))
 ) -> dict:
     """Get RAIN-CERT provenance certificate for a mastered session."""
-    session = _sessions.get(session_id)
-    if not session:
-        raise HTTPException(status_code=404, detail="Session not found")
+    session = _require_session_owner(session_id, current_user)
     cert: RainCert | None = session.get("rain_cert")
     if not cert:
         raise HTTPException(status_code=400, detail="RAIN-CERT not yet issued (master first)")
@@ -476,9 +472,7 @@ async def get_c2pa_manifest(
     current_user: CurrentUser = Depends(require_tier("free", "spark", "creator", "artist", "studio_pro", "enterprise"))
 ) -> dict:
     """Get C2PA v2.2 Content Provenance manifest for EU AI Act Article 50 compliance."""
-    session = _sessions.get(session_id)
-    if not session:
-        raise HTTPException(status_code=404, detail="Session not found")
+    session = _require_session_owner(session_id, current_user)
     c2pa = session.get("c2pa_manifest")
     if not c2pa:
         raise HTTPException(status_code=400, detail="C2PA manifest not yet generated (master first)")
@@ -491,9 +485,7 @@ async def get_qc_report(
     current_user: CurrentUser = Depends(require_tier("free", "spark", "creator", "artist", "studio_pro", "enterprise"))
 ) -> dict:
     """Get QC report (18 automated checks) for a mastered session."""
-    session = _sessions.get(session_id)
-    if not session:
-        raise HTTPException(status_code=404, detail="Session not found")
+    session = _require_session_owner(session_id, current_user)
     qc_report: QCReport | None = session.get("qc_report")
     if not qc_report:
         raise HTTPException(status_code=400, detail="QC not yet run (master first)")
@@ -502,9 +494,7 @@ async def get_qc_report(
 
 @router.get("/pubkey")
 async def get_signing_pubkey() -> dict:
-    """Return the RAIN-CERT Ed25519 public key in PEM format.
-    Used for independent signature verification.
-    """
+    """Return the RAIN-CERT Ed25519 public key in PEM format."""
     from app.services.provenance import get_public_key_pem
     return {
         "alg": "Ed25519",
@@ -514,7 +504,7 @@ async def get_signing_pubkey() -> dict:
     }
 
 
-# ── Spatial Processing (Binaural Preview) ────────────────────────────────────
+# ── Spatial Processing ────────────────────────────────────────────────────────────────────────────────────
 
 
 class SpatialRequest(BaseModel):
@@ -528,13 +518,8 @@ async def apply_spatial(
     request: Request,
     current_user: CurrentUser = Depends(require_tier("studio_pro", "enterprise"))
 ) -> dict:
-    """Apply spatial audio processing to a mastered session.
-
-    Supports binaural preview with ITD simulation. Atmos 7.1 requires GPU backend.
-    """
-    session = _sessions.get(session_id)
-    if not session:
-        raise HTTPException(status_code=404, detail="Session not found")
+    """Apply spatial audio processing to a mastered session."""
+    session = _require_session_owner(session_id, current_user)
 
     try:
         body = await request.json()
@@ -542,93 +527,55 @@ async def apply_spatial(
         body = {}
 
     spatial_format = body.get("format", "binaural")
-    itd_ms = body.get("itd_ms", 0.5)
-    # Clamp ITD to valid range
-    itd_ms = max(0.3, min(0.7, float(itd_ms)))
+    itd_ms = max(0.3, min(0.7, float(body.get("itd_ms", 0.5))))
 
-    logger.info(
-        "spatial_processing_start",
-        session_id=session_id,
-        format=spatial_format,
-        itd_ms=itd_ms,
-    )
+    logger.info("spatial_processing_start", session_id=session_id, format=spatial_format, itd_ms=itd_ms)
 
-    # GPU check — Atmos requires GPU, binaural can run on CPU
     gpu_available = False
     try:
         import torch
         gpu_available = torch.cuda.is_available()
     except ImportError:
-        gpu_available = False
+        pass
 
     if spatial_format == "atmos_71" and not gpu_available:
-        logger.info(
-            "spatial_atmos_gpu_unavailable",
-            session_id=session_id,
-        )
         return {
-            "session_id": session_id,
-            "format": "binaural",
-            "status": "fallback",
+            "session_id": session_id, "format": "binaural", "status": "fallback",
             "note": "Dolby Atmos 7.1 requires GPU backend. Returning binaural preview instead.",
-            "binaural_preview": True,
-            "itd_ms": itd_ms,
+            "binaural_preview": True, "itd_ms": itd_ms,
             "itd_samples": int(itd_ms * INTERNAL_SR / 1000),
-            "object_positions": [],
-            "object_count": 0,
-            "genre_template": "default",
+            "object_positions": [], "object_count": 0, "genre_template": "default",
             "binaural_preview_url": f"/api/v1/master/{session_id}/spatial/preview",
         }
 
     if spatial_format == "binaural":
-        # Binaural ITD simulation: delay one channel by itd_ms
         itd_samples = int(itd_ms * INTERNAL_SR / 1000)
-
-        logger.info(
-            "spatial_binaural_applied",
-            session_id=session_id,
-            itd_ms=itd_ms,
-            itd_samples=itd_samples,
-        )
-
         return {
-            "session_id": session_id,
-            "format": "binaural",
-            "status": "complete",
-            "binaural_preview": True,
-            "itd_ms": itd_ms,
-            "itd_samples": itd_samples,
-            "description": f"Binaural ITD simulation: {itd_ms}ms interaural time difference ({itd_samples} samples at {INTERNAL_SR}Hz)",
+            "session_id": session_id, "format": "binaural", "status": "complete",
+            "binaural_preview": True, "itd_ms": itd_ms, "itd_samples": itd_samples,
+            "description": f"Binaural ITD simulation: {itd_ms}ms ({itd_samples} samples at {INTERNAL_SR}Hz)",
             "object_positions": [
                 {"id": "L", "azimuth": -30, "elevation": 0, "distance": 1.0},
                 {"id": "R", "azimuth": 30, "elevation": 0, "distance": 1.0},
             ],
-            "object_count": 2,
-            "genre_template": "stereo_binaural",
+            "object_count": 2, "genre_template": "stereo_binaural",
             "binaural_preview_url": f"/api/v1/master/{session_id}/spatial/preview",
         }
 
     if spatial_format == "stereo":
         return {
-            "session_id": session_id,
-            "format": "stereo",
-            "status": "complete",
+            "session_id": session_id, "format": "stereo", "status": "complete",
             "binaural_preview": False,
             "object_positions": [
                 {"id": "L", "azimuth": -30, "elevation": 0, "distance": 1.0},
                 {"id": "R", "azimuth": 30, "elevation": 0, "distance": 1.0},
             ],
-            "object_count": 2,
-            "genre_template": "stereo",
+            "object_count": 2, "genre_template": "stereo",
         }
 
-    # Atmos 7.1 with GPU available
     return {
-        "session_id": session_id,
-        "format": "atmos_71",
-        "status": "complete",
-        "binaural_preview": True,
-        "itd_ms": itd_ms,
+        "session_id": session_id, "format": "atmos_71", "status": "complete",
+        "binaural_preview": True, "itd_ms": itd_ms,
         "itd_samples": int(itd_ms * INTERNAL_SR / 1000),
         "object_positions": [
             {"id": "L", "azimuth": -30, "elevation": 0, "distance": 1.0},
@@ -640,13 +587,12 @@ async def apply_spatial(
             {"id": "Ltf", "azimuth": -45, "elevation": 45, "distance": 1.4},
             {"id": "Rtf", "azimuth": 45, "elevation": 45, "distance": 1.4},
         ],
-        "object_count": 8,
-        "genre_template": "atmos_71_immersive",
+        "object_count": 8, "genre_template": "atmos_71_immersive",
         "binaural_preview_url": f"/api/v1/master/{session_id}/spatial/preview",
     }
 
 
-# ── DDP Image Export ─────────────────────────────────────────────────────────
+# ── DDP Image Export ────────────────────────────────────────────────────────────────────────────────────────
 
 
 @router.get("/{session_id}/export/ddp")
@@ -654,15 +600,8 @@ async def export_ddp(
     session_id: str,
     current_user: CurrentUser = Depends(require_tier("studio_pro", "enterprise"))
 ) -> dict:
-    """Export DDP (Disc Description Protocol) image metadata for CD manufacturing.
-
-    Returns a JSON descriptor with DDPID and DDPMS content. Full DDP binary export
-    with 16-bit/44.1kHz Red Book PCM is available via the /sessions/{id}/ddp endpoint
-    for Studio Pro+ tiers.
-    """
-    session = _sessions.get(session_id)
-    if not session:
-        raise HTTPException(status_code=404, detail="Session not found")
+    """Export DDP metadata for CD manufacturing."""
+    session = _require_session_owner(session_id, current_user)
 
     if session["status"] != "complete":
         raise HTTPException(status_code=400, detail="Mastering not complete — process first")
@@ -680,191 +619,100 @@ async def export_ddp(
     frames = int((duration % 1) * 75)
 
     ddpid_content = (
-        f"DDP_ID\r\n"
-        f"Identifier: RAIN-{session_id}\r\n"
-        f"Format: DDP 2.00\r\n"
-        f"Generator: RAIN AI Mastering Engine\r\n"
-        f"GeneratorVersion: 6.0\r\n"
+        f"DDP_ID\r\nIdentifier: RAIN-{session_id}\r\nFormat: DDP 2.00\r\n"
+        f"Generator: RAIN AI Mastering Engine\r\nGeneratorVersion: 6.0\r\n"
     )
-
     ddpms_content = (
-        f"DDP_MS\r\n"
-        f"Title: {title}\r\n"
-        f"Artist: {artist}\r\n"
-        f"Genre: {genre}\r\n"
-        f"SampleRate: 44100\r\n"
-        f"BitDepth: 16\r\n"
-        f"Channels: {analysis.channels}\r\n"
-        f"Duration: {duration:.3f}\r\n"
-        f"TrackCount: 1\r\n"
-        f"Track 01:\r\n"
-        f"  Start: 00:00:00.00\r\n"
-        f"  End: {minutes:02d}:{seconds:02d}:{frames:02d}.00\r\n"
+        f"DDP_MS\r\nTitle: {title}\r\nArtist: {artist}\r\nGenre: {genre}\r\n"
+        f"SampleRate: 44100\r\nBitDepth: 16\r\nChannels: {analysis.channels}\r\n"
+        f"Duration: {duration:.3f}\r\nTrackCount: 1\r\nTrack 01:\r\n"
+        f"  Start: 00:00:00.00\r\n  End: {minutes:02d}:{seconds:02d}:{frames:02d}.00\r\n"
         f"  PreGap: 02:00\r\n"
     )
 
-    logger.info(
-        "ddp_export_metadata",
-        session_id=session_id,
-        title=title,
-        duration=duration,
-    )
-
     return {
-        "session_id": session_id,
-        "format": "ddp",
-        "status": "ready",
-        "red_book_spec": {
-            "sample_rate": 44100,
-            "bit_depth": 16,
-            "channels": analysis.channels,
-        },
-        "ddpid": ddpid_content,
-        "ddpms": ddpms_content,
+        "session_id": session_id, "format": "ddp", "status": "ready",
+        "red_book_spec": {"sample_rate": 44100, "bit_depth": 16, "channels": analysis.channels},
+        "ddpid": ddpid_content, "ddpms": ddpms_content,
         "note": (
-            "This is the DDP metadata descriptor. Full DDP image export (ZIP with DDPID, DDPMS, "
-            "PQSHEET, and 16-bit/44.1kHz Red Book PCM audio) is available via the "
-            f"/api/v1/sessions/{session_id}/ddp endpoint for Studio Pro+ tiers."
+            "DDP metadata descriptor. Full binary DDP image available via "
+            f"/api/v1/sessions/{session_id}/ddp for Studio Pro+ tiers."
         ),
         "download_endpoint": f"/api/v1/sessions/{session_id}/ddp",
     }
 
 
-# ---------------------------------------------------------------------------
-# AI Suggest — Claude-powered mastering assistant (CollabTab backend)
-# ---------------------------------------------------------------------------
+# ── AI Suggest ────────────────────────────────────────────────────────────────────────────────────────────────
+
 
 def _generate_heuristic_response(user_message: str, analysis: AnalysisResult) -> str:
-    """Generate genre-aware mastering advice when the Claude API is unavailable.
-
-    Checks for intent keywords in the user message and provides specific macro
-    recommendations (0-10 scale) based on the session analysis data.
-    """
+    """Keyword + genre-aware mastering advice fallback."""
     q = user_message.lower()
     genre = getattr(analysis, "genre", "unknown")
     lufs = analysis.input_lufs
     centroid = analysis.spectral_centroid
     parts: list[str] = []
 
-    # ---- keyword-driven advice ----
-
     if "bright" in q or "air" in q or "crisp" in q or "presence" in q:
         if centroid > 5000.0:
             parts.append(
                 f"Your track already has a bright spectral centre ({centroid:.0f} Hz). "
-                "I'd keep BRIGHTEN around 4-5 to avoid harshness. "
-                "If you want more 'air' without sibilance, try REPAIR at 2-3 to tame the top end first."
+                "Keep BRIGHTEN around 4-5 to avoid harshness. Try REPAIR at 2-3 first."
             )
         else:
             rec = 6.0 if centroid < 3000.0 else 5.0
-            parts.append(
-                f"The spectral centroid is at {centroid:.0f} Hz — there's room for more presence. "
-                f"Try BRIGHTEN at {rec:.1f} and see how it sits."
-            )
+            parts.append(f"Spectral centroid at {centroid:.0f} Hz — try BRIGHTEN at {rec:.1f}.")
 
     if "warm" in q or "analog" in q or "vintage" in q or "tape" in q:
         rec = min(7.0, 4.0 + (4000.0 - min(centroid, 4000.0)) / 1000.0)
-        parts.append(
-            f"For warmth, set WARMTH to {rec:.1f}. This adds harmonic saturation and "
-            "a gentle low-shelf boost. Keep BRIGHTEN below 5 to avoid fighting the warmth."
-        )
+        parts.append(f"For warmth: WARMTH {rec:.1f}. Keep BRIGHTEN below 5 to avoid fighting it.")
 
     if "punch" in q or "drum" in q or "kick" in q or "snare" in q or "impact" in q:
         rec = 7.0 if genre in ("rock", "hiphop", "electronic") else 5.5
-        parts.append(
-            f"For more punch, set PUNCH to {rec:.1f}. This sharpens transient attacks — "
-            "you'll feel drums hit harder. Pair with GLUE at 4-5 so the mix stays cohesive."
-        )
+        parts.append(f"For punch: PUNCH {rec:.1f}. Pair with GLUE 4-5 for cohesion.")
 
     if "bass" in q or "low end" in q or "sub" in q or "bottom" in q:
         bass = analysis.bass_energy_ratio
         if bass > 0.25:
-            parts.append(
-                f"Your low end is already fairly heavy ({bass:.0%} of total energy). "
-                "Adding more WARMTH could muddy things — try PUNCH at 6 to tighten the low end instead."
-            )
+            parts.append(f"Low end already heavy ({bass:.0%}). Try PUNCH 6 to tighten rather than adding WARMTH.")
         else:
-            parts.append(
-                "The low end is relatively light. Bump WARMTH to 6 for body, "
-                "and consider WIDTH at 4 to keep the bass centred and tight."
-            )
+            parts.append("Light low end. Bump WARMTH to 6, WIDTH to 4 to keep bass centred.")
 
     if "loud" in q or "louder" in q or "level" in q or "spotify" in q or "stream" in q:
         headroom = -14.0 - lufs
         if headroom > 4.0:
-            parts.append(
-                f"Current loudness is {lufs:.1f} LUFS — about {headroom:.1f} LU below Spotify's -14 target. "
-                "Set GLUE to 6-7 and PUNCH to 5-6 to increase perceived loudness while preserving dynamics."
-            )
+            parts.append(f"At {lufs:.1f} LUFS, {headroom:.1f} LU below Spotify target. GLUE 6-7, PUNCH 5-6.")
         else:
-            parts.append(
-                f"You're already at {lufs:.1f} LUFS, close to Spotify's -14 target. "
-                "A small GLUE bump to 5 should be enough. Pushing harder will cost you dynamics."
-            )
+            parts.append(f"At {lufs:.1f} LUFS, close to target. GLUE 5 is enough — harder push costs dynamics.")
 
     if "wide" in q or "stereo" in q or "spatial" in q or "immersive" in q:
         sw = analysis.stereo_width
         if sw > 0.8:
-            parts.append(
-                f"Stereo width is already broad ({sw:.2f}). Going higher risks mono compatibility. "
-                "Try SPACE at 5-6 for depth instead of more WIDTH."
-            )
+            parts.append(f"Width already broad ({sw:.2f}). Try SPACE 5-6 for depth instead.")
         else:
-            parts.append(
-                "Set WIDTH to 7 and SPACE to 5 for a wider, more immersive image. "
-                "Bass stays centred automatically below 200 Hz."
-            )
+            parts.append("WIDTH 7 + SPACE 5 for immersive image. Bass stays centred below 200 Hz.")
 
     if "clean" in q or "noise" in q or "fix" in q or "repair" in q:
-        parts.append(
-            "Set REPAIR to 5-6 for moderate spectral cleanup (rumble, hiss, sibilance). "
-            "Go to 7-8 only if there's audible noise or clipping artefacts."
-        )
+        parts.append("REPAIR 5-6 for moderate cleanup. Go 7-8 only if audible noise or clipping.")
 
     if "radio" in q or "professional" in q or "commercial" in q or "polished" in q:
-        parts.append(
-            "For a radio-ready master: GLUE 6, PUNCH 5, BRIGHTEN 5, WARMTH 3, WIDTH 5. "
-            "This gives you competitive loudness with polish and clarity."
-        )
-
-    # ---- genre-specific fallback when no keywords matched ----
+        parts.append("Radio-ready: GLUE 6, PUNCH 5, BRIGHTEN 5, WARMTH 3, WIDTH 5.")
 
     if not parts:
         genre_tips: dict[str, str] = {
-            "electronic": (
-                "For electronic music, try PUNCH 6, GLUE 5, WIDTH 7, BRIGHTEN 5. "
-                "This gives you tight transients, wide stereo, and crisp highs."
-            ),
-            "hiphop": (
-                "For hip-hop, try WARMTH 6, PUNCH 7, GLUE 5, WIDTH 4. "
-                "This prioritises punchy low end and upfront vocals."
-            ),
-            "rock": (
-                "For rock, try PUNCH 7, GLUE 6, BRIGHTEN 5, WARMTH 4. "
-                "This keeps energy high with aggressive transients and harmonic body."
-            ),
-            "pop": (
-                "For pop, a balanced starting point: BRIGHTEN 5, GLUE 5, WIDTH 5, "
-                "PUNCH 4, WARMTH 3. Adjust to taste from there."
-            ),
-            "ambient": (
-                "For ambient, keep dynamics open: GLUE 2, PUNCH 2, SPACE 7, WIDTH 6. "
-                "Let the music breathe — heavy compression kills the atmosphere."
-            ),
-            "funk_soul": (
-                "For funk/soul, try PUNCH 6, WARMTH 5, GLUE 4, WIDTH 5. "
-                "The groove engine will help preserve the rhythmic feel."
-            ),
-            "afropop_house": (
-                "For afropop/house, try PUNCH 5, WARMTH 5, GLUE 5, WIDTH 6, SPACE 5. "
-                "This keeps the groove intact with warm, immersive sound."
-            ),
+            "electronic": "PUNCH 6, GLUE 5, WIDTH 7, BRIGHTEN 5.",
+            "hiphop": "WARMTH 6, PUNCH 7, GLUE 5, WIDTH 4.",
+            "rock": "PUNCH 7, GLUE 6, BRIGHTEN 5, WARMTH 4.",
+            "pop": "BRIGHTEN 5, GLUE 5, WIDTH 5, PUNCH 4, WARMTH 3.",
+            "ambient": "GLUE 2, PUNCH 2, SPACE 7, WIDTH 6 — let it breathe.",
+            "funk_soul": "PUNCH 6, WARMTH 5, GLUE 4, WIDTH 5.",
+            "afropop_house": "PUNCH 5, WARMTH 5, GLUE 5, WIDTH 6, SPACE 5.",
         }
         tip = genre_tips.get(genre, genre_tips["pop"])
         parts.append(
-            f"I detected the genre as **{genre}** (tempo {analysis.tempo_bpm:.0f} BPM, "
+            f"Detected genre **{genre}** (tempo {analysis.tempo_bpm:.0f} BPM, "
             f"centroid {centroid:.0f} Hz, groove {analysis.groove_score:.2f}).\n\n{tip}\n\n"
-            "Tell me more about the sound you're going for and I can refine these suggestions."
+            "Tell me more about the sound you're going for."
         )
 
     return "\n\n".join(parts)
@@ -872,15 +720,7 @@ def _generate_heuristic_response(user_message: str, analysis: AnalysisResult) ->
 
 @router.post("/{session_id}/ai-suggest")
 async def ai_suggest(session_id: str, request: Request) -> dict:
-    """Ask Claude for mastering suggestions based on session analysis.
-
-    Tries the Anthropic API first; falls back to a keyword + genre heuristic
-    when the key is missing or the API call fails.
-
-    Auth: enforced by protected_router wrapper in main.py (production) /
-    DevAuthMiddleware (development). No per-route Depends needed here because
-    this route carries no tier restriction beyond general authentication.
-    """
+    """Claude-powered mastering suggestions. Falls back to heuristic if API unavailable."""
     body = await request.json()
     user_message: str = body.get("message", "")
 
@@ -890,7 +730,6 @@ async def ai_suggest(session_id: str, request: Request) -> dict:
 
     analysis: AnalysisResult = session["analysis"]
 
-    # Build context string for Claude
     context = (
         f'You are RAIN\'s AI mastering engineer. The user uploaded "{session.get("filename", "unknown")}".\n'
         f"Analysis: Input LUFS={analysis.input_lufs:.1f}, Genre={getattr(analysis, 'genre', 'unknown')}, "
@@ -901,15 +740,13 @@ async def ai_suggest(session_id: str, request: Request) -> dict:
         "The 7 macros are: BRIGHTEN, GLUE, WIDTH, PUNCH, WARMTH, SPACE, REPAIR."
     )
 
-    # Try real Anthropic API, fall back to heuristic
     try:
         api_key = settings.ANTHROPIC_API_KEY
         if api_key and api_key != "sk-ant-..." and len(api_key) > 10:
             import anthropic
-
             client = anthropic.Anthropic(api_key=api_key)
             response = client.messages.create(
-                model="claude-sonnet-4-20250514",
+                model=settings.ANTHROPIC_MODEL,  # from config, not hardcoded
                 max_tokens=500,
                 system=context,
                 messages=[{"role": "user", "content": user_message}],
@@ -917,6 +754,7 @@ async def ai_suggest(session_id: str, request: Request) -> dict:
             return {
                 "response": response.content[0].text,
                 "source": "claude",
+                "model": settings.ANTHROPIC_MODEL,
                 "genre": getattr(analysis, "genre", "unknown"),
                 "analysis_summary": {
                     "input_lufs": round(analysis.input_lufs, 1),
@@ -928,7 +766,6 @@ async def ai_suggest(session_id: str, request: Request) -> dict:
     except Exception as e:
         logger.warning("claude_api_fallback", error=str(e), session_id=session_id)
 
-    # Heuristic fallback
     suggestions = _generate_heuristic_response(user_message, analysis)
     return {
         "response": suggestions,
