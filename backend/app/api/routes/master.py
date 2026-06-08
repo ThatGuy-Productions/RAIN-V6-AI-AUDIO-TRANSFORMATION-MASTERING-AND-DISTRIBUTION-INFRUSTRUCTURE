@@ -84,7 +84,9 @@ OUTPUT_DIR.mkdir(exist_ok=True)
 
 
 class ProcessRequest(BaseModel):
-    target_lufs: float = Field(default=-14.0, ge=-16.0, le=-9.0)
+    # Canonical range per CLAUDE.md ProcessingParams schema: [-24.0, -8.0]
+    # (Previous range [-16.0, -9.0] was too narrow — blocked classical, broadcast, podcast)
+    target_lufs: float = Field(default=-14.0, ge=-24.0, le=-8.0)
     brightness: float = Field(default=2.0, ge=0.0, le=4.0)
     tightness: float = Field(default=3.0, ge=1.0, le=5.0)
     width: float = Field(default=2.0, ge=-3.0, le=6.0)
@@ -874,6 +876,10 @@ async def ai_suggest(session_id: str, request: Request) -> dict:
 
     Tries the Anthropic API first; falls back to a keyword + genre heuristic
     when the key is missing or the API call fails.
+
+    Auth: enforced by protected_router wrapper in main.py (production) /
+    DevAuthMiddleware (development). No per-route Depends needed here because
+    this route carries no tier restriction beyond general authentication.
     """
     body = await request.json()
     user_message: str = body.get("message", "")
