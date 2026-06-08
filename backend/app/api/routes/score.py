@@ -46,7 +46,7 @@ async def public_rain_score(
         raise HTTPException(413, detail={"code": "RAIN-E201", "message": "File exceeds 20 MB public limit"})
 
     try:
-        from app.services.rain_score import compute_rain_score
+        from app.services.rain_score_v2 import compute_rain_score
         from app.services.audio_analysis import extract_mel_spectrogram
         mel, duration, sr = await extract_mel_spectrogram(data)
         score = await compute_rain_score(data, platform, mel)

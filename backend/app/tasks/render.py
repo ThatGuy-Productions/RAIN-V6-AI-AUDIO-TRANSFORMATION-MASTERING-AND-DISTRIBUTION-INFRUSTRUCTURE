@@ -21,7 +21,7 @@ async def _render_session_async(
     from app.services.inference import InferenceService
     from app.services.storage import download_from_s3, upload_to_s3
     from app.services.wasm_bridge import RainDSPBridge
-    from app.services.rain_score import compute_rain_score
+    from app.services.rain_score_v2 import compute_rain_score
     from app.core.config import settings
     from sqlalchemy import select, update, text
     from uuid import UUID
