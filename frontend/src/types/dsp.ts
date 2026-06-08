@@ -64,6 +64,14 @@ export interface ProcessingParams {
 
 /**
  * Default ProcessingParams with all 46 fields set to their canonical defaults.
+ *
+ * MUST stay in sync with:
+ *   backend/app/services/heuristic_params.py  default_params()
+ *   ml/rainnet/heuristics.py                  BASE_PARAMS
+ *
+ * Macro defaults are 5.0 for all controls except macro_repair (0.0 = off by default).
+ * These are neutral starting-point values — genre heuristics will override them when
+ * an audio file is analysed.
  */
 export const DEFAULT_PROCESSING_PARAMS: Readonly<ProcessingParams> = {
   target_lufs: -14.0,
@@ -91,12 +99,15 @@ export const DEFAULT_PROCESSING_PARAMS: Readonly<ProcessingParams> = {
   sail_enabled: false,
   sail_stem_gains: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
   vinyl_mode: false,
+  // Canonical macro defaults per CLAUDE.md: all 5.0 except macro_repair: 0.0
+  // Previous values (4.2 / 3.8 / 6.1 / 5.5 / 3.0) were non-canonical and
+  // diverged from heuristic_params.py default_params() — now aligned.
   macro_brighten: 5.0,
-  macro_glue: 4.2,
-  macro_width: 3.8,
-  macro_punch: 6.1,
-  macro_warmth: 5.5,
-  macro_space: 3.0,
+  macro_glue: 5.0,
+  macro_width: 5.0,
+  macro_punch: 5.0,
+  macro_warmth: 5.0,
+  macro_space: 5.0,
   macro_repair: 0.0,
 } as const;
 
