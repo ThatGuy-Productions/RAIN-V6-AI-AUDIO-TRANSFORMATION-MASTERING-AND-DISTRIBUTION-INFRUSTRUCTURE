@@ -26,7 +26,17 @@ from ml.rainnet.heuristics import (
 # Canonical ProcessingParams schema — 46 ONNX neurons decode to these fields.
 # sail_stem_gains is [12] (6 decoded + 6 zero-padded), saturation_mode is argmax of 3 logits.
 def default_params() -> dict[str, Any]:
-    """Return the canonical ProcessingParams with all defaults.
+    """Return the canonical ProcessingParams with all 46 defaults.
+
+    This is the single Python source-of-truth for default values.
+    MUST stay in sync with:
+      - ml/rainnet/heuristics.py  (backend authoritative)
+      - frontend/src/types/dsp.ts  DEFAULT_PROCESSING_PARAMS
+    """
+    return {
+        # Loudness target
+        "target_lufs": -14.0,           # Platform-dependent. Range: [-24.0, -8.0]
+        "true_peak_ceiling": -1.0,      # dBTP. Vinyl: -3.0. Range: [-6.0, 0.0]
 
         # Multiband dynamics (3-band: low/mid/high)
         "mb_threshold_low": -18.0,
@@ -56,7 +66,7 @@ def default_params() -> dict[str, Any]:
         "side_gain": 0.0,
         "stereo_width": 1.0,
 
-        # SAIL (Stem-Aware Intelligent Limiting)
+        # SAIL v2 (Stem-Aware Intelligent Limiting — 12-stem)
         "sail_enabled": False,
         "sail_stem_gains": [0.0] * 12,  # float[12] — 12-stem SAIL v2
 
