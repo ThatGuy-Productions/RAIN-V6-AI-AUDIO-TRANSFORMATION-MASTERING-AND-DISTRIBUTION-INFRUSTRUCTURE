@@ -3,7 +3,7 @@
 x-backend-env: &backend-env
   DATABASE_URL: "postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}"
   VALKEY_URL: "redis://valkey:6379/0"
-  REDIS_URL: "redis://valkey:6379/0"  # legacy compat — points at valkey
+  REDIS_URL: "redis://valkey:6379/0"  # legacy compat alias — points at valkey. DO NOT add a separate Redis service.
   S3_ENDPOINT_URL: "http://minio:9000"
   JWT_PUBLIC_KEY_PATH: /etc/rain/jwt.pub
   JWT_PRIVATE_KEY_PATH: /etc/rain/jwt.key
@@ -12,8 +12,9 @@ x-backend-env: &backend-env
   ONNX_MODEL_PATH: "/models/rain_base.onnx"
   FRONTEND_URL: "http://localhost:5173,http://localhost:5174,http://localhost:4173"
   # Admin seed (picked up by migration 0005 / scripts/seed_admin_user.py)
-  RAIN_ADMIN_EMAIL: "${RAIN_ADMIN_EMAIL:-philippusbolke@gmail.com}"
-  RAIN_ADMIN_PASSWORD: "${RAIN_ADMIN_PASSWORD:-}"
+  # REQUIRED: set both in .env before deploying — no defaults, hard-fail on missing.
+  RAIN_ADMIN_EMAIL: "${RAIN_ADMIN_EMAIL:?ERROR: RAIN_ADMIN_EMAIL must be set in .env}"
+  RAIN_ADMIN_PASSWORD: "${RAIN_ADMIN_PASSWORD:?ERROR: RAIN_ADMIN_PASSWORD must be set in .env}"
   RAIN_ADMIN_TIER: "${RAIN_ADMIN_TIER:-enterprise}"
   RAIN_ADMIN_IS_ADMIN: "${RAIN_ADMIN_IS_ADMIN:-true}"
 
@@ -205,6 +206,7 @@ services:
     image: grafana/grafana:10.4.0
     environment:
       GF_SECURITY_ADMIN_USER: ${GF_ADMIN_USER:-admin}
+      # WARNING: change GF_ADMIN_PASSWORD in .env before exposing Grafana externally
       GF_SECURITY_ADMIN_PASSWORD: ${GF_ADMIN_PASSWORD:-rain_grafana}
       GF_USERS_ALLOW_SIGN_UP: "false"
     volumes:
