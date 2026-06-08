@@ -14,6 +14,7 @@ from app.api.routes import (
     auth, upload, billing, sessions, download, aie, distribution,
     suno_import, score, whitelabel, workspaces, lora,
     master, qc, separate, waitlist, provenance_routes,
+    assist,  # Claude-powered mastering suggestions and reports (Creator+ tier)
 )
 from app.api.dependencies import require_auth
 
@@ -91,6 +92,8 @@ protected_router.include_router(lora.router, prefix="/api/v1")
 protected_router.include_router(master.router, prefix="/api/v1")
 protected_router.include_router(qc.router, prefix="/api/v1")
 protected_router.include_router(separate.router, prefix="/api/v1")
+# AI Assist: Claude-powered macro suggestions + before/after reports (Creator+ tier)
+protected_router.include_router(assist.router, prefix="/api/v1")
 
 app.include_router(protected_router)
 
