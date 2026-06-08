@@ -13,6 +13,12 @@ Total: Technical(60) + Dynamic(15) + Translation(10) + Emotional(15) = 100
 
 This is what users see and care about. It's the single number that tells them
 "is my master ready to release?"
+
+Compatibility:
+  compute_rain_score(bytes, platform, mel) — drop-in replacement for the v1
+  function of the same name. Decodes audio, runs v2 engine, returns a flat
+  dict matching the v1 response contract plus new v2 fields.
+  Import path: from app.services.rain_score_v2 import compute_rain_score
 """
 
 from __future__ import annotations
@@ -116,7 +122,6 @@ def _compute_score_sync(
     n_fft = min(8192, len(mono))
     if n_fft > 256:
         spectrum = np.abs(np.fft.rfft(mono[:n_fft])) ** 2
-        # Divide into 8 octave-ish bands and measure variance
         n_bins = len(spectrum)
         band_size = n_bins // 8
         band_energies = []
@@ -136,7 +141,6 @@ def _compute_score_sync(
     # --- Technical: Stereo (max 10) ---
     if audio.shape[1] >= 2:
         corr = float(np.corrcoef(audio[:, 0], audio[:, 1])[0, 1])
-        # Ideal: moderate correlation (0.3-0.8). Too high = mono, too low = phase issues
         if 0.3 <= corr <= 0.8:
             score.stereo = 10.0
         elif corr > 0.8:
@@ -155,12 +159,9 @@ def _compute_score_sync(
         input_rms = float(np.sqrt(np.mean(input_audio ** 2)))
         input_peak = float(np.max(np.abs(input_audio)))
         input_crest = 20.0 * np.log10(input_peak / (input_rms + 1e-10))
-        # How much crest factor was preserved? (ratio, 1.0 = perfect)
         crest_ratio = min(1.0, output_crest / (input_crest + 1e-10))
         score.crest_preservation = crest_ratio * 8.0
     else:
-        # Without input reference, score based on absolute crest factor
-        # Good masters: 8-14 dB crest factor
         if 8.0 <= output_crest <= 14.0:
             score.crest_preservation = 8.0
         elif output_crest < 8.0:
@@ -169,8 +170,8 @@ def _compute_score_sync(
             score.crest_preservation = max(0.0, 8.0 - (output_crest - 14.0))
 
     # --- Dynamic Integrity: Micro-dynamics (max 7) ---
-    # Measure short-term loudness variance (3s windows)
     window_samples = int(3.0 * sr)
+    st_variance: float = 0.0
     if len(mono) > window_samples * 2:
         st_values = []
         for start in range(0, len(mono) - window_samples, window_samples // 3):
@@ -180,7 +181,6 @@ def _compute_score_sync(
                 st_values.append(20.0 * np.log10(chunk_rms))
         if st_values:
             st_variance = float(np.var(st_values))
-            # Good variance: 2-8 dB² (not flat, not chaotic)
             if 2.0 <= st_variance <= 8.0:
                 score.micro_dynamics = 7.0
             elif st_variance < 2.0:
@@ -198,27 +198,23 @@ def _compute_score_sync(
         stereo_energy = float(np.sum(audio ** 2))
         mono_energy = float(np.sum(mono_sum ** 2))
         mono_ratio = mono_energy / (stereo_energy + 1e-10)
-        # >0.8 = great, <0.5 = phase issues
         score.mono_compat = min(5.0, mono_ratio * 5.0)
     else:
         score.mono_compat = 5.0
 
     # --- Translation: Codec Resilience (max 5) ---
-    # High-frequency energy above 16kHz = more codec damage
     freqs = np.fft.rfftfreq(n_fft, 1.0 / sr) if n_fft > 256 else np.array([0])
+    spectrum_full: Optional[np.ndarray] = None
     if len(freqs) > 1 and n_fft > 256:
         spectrum_full = np.abs(np.fft.rfft(mono[:n_fft])) ** 2
         hf_mask = freqs > 16000
         hf_ratio = float(np.sum(spectrum_full[hf_mask])) / (float(np.sum(spectrum_full)) + 1e-10)
-        # Less HF energy = better codec survival
         score.codec_resilience = max(0.0, 5.0 - hf_ratio * 50.0)
     else:
         score.codec_resilience = 3.0
 
     # --- Emotional Impact: Energy Arc (max 5) ---
-    # Does the track have dynamic shape? (builds, drops, crescendos)
     if len(mono) > sr * 10:
-        # Divide track into 8 segments, measure RMS arc
         seg_len = len(mono) // 8
         seg_rms = []
         for i in range(8):
@@ -226,7 +222,6 @@ def _compute_score_sync(
             seg_rms.append(float(np.sqrt(np.mean(seg ** 2))))
         if max(seg_rms) > 0:
             normalized_arc = [r / max(seg_rms) for r in seg_rms]
-            # Good arc: variance > 0.01 (not flat)
             arc_variance = float(np.var(normalized_arc))
             score.energy_arc = min(5.0, arc_variance * 100.0)
         else:
@@ -235,20 +230,13 @@ def _compute_score_sync(
         score.energy_arc = 2.5
 
     # --- Emotional Impact: Tension Index (max 5) ---
-    # Use short-term loudness variance as tension proxy (computed in micro_dynamics above)
-    if "st_variance" in dir() and st_variance is not None:
-        score.tension_index = min(5.0, st_variance * 2.0)
-    else:
-        # Fallback: use crest factor as tension proxy
-        score.tension_index = min(5.0, output_crest / 3.0)
+    score.tension_index = min(5.0, st_variance * 2.0) if st_variance > 0 else min(5.0, output_crest / 3.0)
 
     # --- Emotional Impact: Presence (max 5) ---
-    # Energy in 2-5kHz (vocal/lead presence band)
-    if len(freqs) > 1 and n_fft > 256:
+    if spectrum_full is not None and len(freqs) > 1:
         presence_mask = (freqs >= 2000) & (freqs <= 5000)
         total_mask = (freqs >= 20) & (freqs <= 20000)
         presence_ratio = float(np.sum(spectrum_full[presence_mask])) / (float(np.sum(spectrum_full[total_mask])) + 1e-10)
-        # Good: 15-25% of energy in presence band
         if 0.15 <= presence_ratio <= 0.25:
             score.presence = 5.0
         else:
@@ -304,3 +292,65 @@ async def compute_rain_score_v2(
     return await asyncio.to_thread(
         _compute_score_sync, audio, sr, input_audio, input_sr, primary_platform
     )
+
+
+async def compute_rain_score(
+    audio_data: bytes,
+    primary_platform: str = "spotify",
+    mel: Optional[np.ndarray] = None,
+) -> dict:
+    """
+    Bytes-in / dict-out compatibility shim for v1 callers.
+
+    Drop-in replacement for the v1 `compute_rain_score` function.
+    Callers (render.py, score.py) import this without any changes:
+        from app.services.rain_score_v2 import compute_rain_score
+
+    Returns a flat dict matching the v1 response contract:
+        overall, integrated_lufs, true_peak_dbtp, <platform>: score, ...
+    Plus new v2 fields:
+        breakdown (ScoreBreakdown dataclass), verdict, release_ready
+    """
+    import io
+    import soundfile as sf
+
+    def _decode_and_score() -> tuple[ScoreBreakdown, float, float]:
+        audio_arr, sr = sf.read(io.BytesIO(audio_data), dtype="float64", always_2d=True)
+        import pyloudnorm as pyln
+        from scipy.signal import resample_poly
+
+        meter = pyln.Meter(sr)
+        lufs = float(meter.integrated_loudness(audio_arr))
+        if not np.isfinite(lufs):
+            lufs = -70.0
+        oversampled = resample_poly(audio_arr, up=4, down=1, axis=0)
+        tp_linear = float(np.max(np.abs(oversampled)))
+        tp_db = 20.0 * np.log10(tp_linear) if tp_linear > 1e-10 else -100.0
+
+        breakdown = _compute_score_sync(audio_arr, sr, primary_platform=primary_platform)
+        return breakdown, lufs, tp_db
+
+    breakdown, lufs, tp_db = await asyncio.to_thread(_decode_and_score)
+
+    result: dict = {
+        "overall": breakdown.overall,
+        "integrated_lufs": round(lufs, 2),
+        "true_peak_dbtp": round(tp_db, 2),
+        "verdict": breakdown.verdict,
+        "release_ready": breakdown.release_ready,
+        "breakdown": {
+            "loudness": breakdown.loudness,
+            "true_peak": breakdown.true_peak,
+            "spectral": breakdown.spectral,
+            "stereo": breakdown.stereo,
+            "crest_preservation": breakdown.crest_preservation,
+            "micro_dynamics": breakdown.micro_dynamics,
+            "mono_compat": breakdown.mono_compat,
+            "codec_resilience": breakdown.codec_resilience,
+            "energy_arc": breakdown.energy_arc,
+            "tension_index": breakdown.tension_index,
+            "presence": breakdown.presence,
+        },
+        **breakdown.platform_scores,
+    }
+    return result
