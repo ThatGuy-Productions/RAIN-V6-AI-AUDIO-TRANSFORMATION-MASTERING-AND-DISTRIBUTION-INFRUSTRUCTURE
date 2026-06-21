@@ -324,3 +324,6 @@ Contact [engineering@thatguy-productions.com](mailto:engineering@thatguy-product
 ---
 
 *RAIN v6 · Engine stamp: `RAIN v6 — BS-RoFormer 12-stem` · LLM advisory layer: `claude-sonnet-4-6` · Publisher: ThatGuy Productions*
+
+
+<img width="1652" height="830" alt="image" src="https://github.com/user-attachments/assets/49a5af79-dad5-4f27-83e5-0a1dca0d4f50" />
