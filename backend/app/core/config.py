@@ -32,7 +32,7 @@ class Settings(BaseSettings):
     STRIPE_PRICE_ARTIST_MONTHLY: str = ""
     STRIPE_PRICE_STUDIO_PRO_MONTHLY: str = ""
 
-    RAIN_NORMALIZATION_VALIDATED: bool = True
+    RAIN_NORMALIZATION_VALIDATED: bool = False
     ANTHROPIC_API_KEY: str = ""
     # Canonical Anthropic model string. Override via env var to switch models
     # without code changes. Must match a currently-supported claude-* model ID.
