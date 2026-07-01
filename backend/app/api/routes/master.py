@@ -44,7 +44,7 @@ from app.services.metadata_engine import write_metadata
 from app.services.feature_extraction import extract_features, FeatureVector
 from app.services.qc_engine import run_qc, QCReport
 from app.services.platform_targets import get_platform_target, list_platform_targets
-from app.services.provenance import create_rain_cert, create_c2pa_manifest, RainCert
+from app.services.provenance import create_rain_cert, create_c2pa_manifest, verify_cert, RainCert
 
 logger = structlog.get_logger()
 
@@ -366,6 +366,14 @@ async def process_audio(
             output_lufs=result.output_lufs,
             output_true_peak=result.output_true_peak,
         )
+        # Provenance completion gate for the prototype in-memory path.
+        # Do not mark a session complete unless the RAIN-CERT is signed and
+        # immediately verifies. The DB/S3 render task has the stricter hash gate;
+        # this mirrors the RAIN-E306 enforcement for this local path.
+        if not getattr(rain_cert, "signature", None):
+            raise RuntimeError("RAIN-E306: Session completed without signed cert")
+        if not verify_cert(rain_cert):
+            raise RuntimeError("RAIN-E306: RAIN-CERT signature verification failed")
         session["rain_cert"] = rain_cert
 
         c2pa = create_c2pa_manifest(
@@ -504,7 +512,7 @@ async def get_signing_pubkey() -> dict:
     }
 
 
-# ── Spatial Processing ────────────────────────────────────────────────────────────────────────────────────
+# ── Spatial Processing ────────────────────────────────────────────────────────────────────────────────────────────────────
 
 
 class SpatialRequest(BaseModel):
@@ -592,7 +600,7 @@ async def apply_spatial(
     }
 
 
-# ── DDP Image Export ────────────────────────────────────────────────────────────────────────────────────────
+# ── DDP Image Export ────────────────────────────────────────────────────────────────────────────────────────────────────────────
 
 
 @router.get("/{session_id}/export/ddp")
@@ -642,7 +650,7 @@ async def export_ddp(
     }
 
 
-# ── AI Suggest ────────────────────────────────────────────────────────────────────────────────────────────────
+# ── AI Suggest ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 
 
 def _generate_heuristic_response(user_message: str, analysis: AnalysisResult) -> str:
