@@ -21,25 +21,25 @@ Beyond LANDR. Beyond iZotope. Beyond anything that came before.
 ## Architecture
 
 ```
-┌─────────────────────────────────────────────────────────────────────┐
+┌───────────────────────────────────────────────────────────────────────────────────┐
 │  Browser  (React 19 + Vite 7 + TypeScript 5.5 + Tailwind 4)        │
-│  ┌──────────────────┐  ┌─────────────────┐  ┌─────────────────────┐ │
+│  ┌──────────────────┐  ┌─────────────────┐  ┌──────────────────────┐ │
 │  │ Web Audio API    │  │ ONNX Runtime Web│  │ RainDSP  C++/WASM  │ │
 │  │ 32-bit preview   │  │ WebGPU → WASM   │  │ 64-bit · deterministic│ │
-│  └──────────────────┘  └─────────────────┘  └─────────────────────┘ │
-└────────────────────────────────┬────────────────────────────────────┘
+│  └───────────────────┘  └─────────────────┘  └───────────────────────┘ │
+└────────────────────────────────────┬──────────────────────────────────────┘
                                  │ REST / WebSocket  (FastAPI)
-┌────────────────────────────────▼────────────────────────────────────┐
+┌────────────────────────────────────▼──────────────────────────────────────┐
 │  Backend  (Python 3.12 · FastAPI · Celery · Structlog)              │
-│  ┌──────────────┐ ┌────────────┐ ┌─────────────┐ ┌──────────────┐  │
+│  ┌──────────────┐ ┌──────────────┐ ┌─────────────┐ ┌──────────────┐  │
 │  │ Master Engine│ │ QC Engine  │ │ RAIN-CERT   │ │ DDEX ERN 4.3 │  │
 │  │ 16-stage DSP │ │ 18 checks  │ │ Ed25519     │ │ AI disclosure │  │
-│  └──────────────┘ └────────────┘ └─────────────┘ └──────────────┘  │
-│  ┌──────────────┐ ┌────────────┐ ┌─────────────┐ ┌──────────────┐  │
+│  └──────────────┘ └──────────────┘ └─────────────┘ └──────────────┘  │
+│  ┌──────────────┐ ┌─────────────┐ ┌─────────────┐ ┌──────────────┐  │
 │  │ Feature Ext. │ │ Heuristic  │ │ LabelGrid   │ │ Stripe       │  │
 │  │ 43-dim vector│ │ 46 params  │ │ Distribution│ │ Billing      │  │
-│  └──────────────┘ └────────────┘ └─────────────┘ └──────────────┘  │
-└─────────────────────────────────────────────────────────────────────┘
+│  └──────────────┘ └─────────────┘ └─────────────┘ └──────────────┘  │
+└─────────────────────────────────────────────────────────────────────────────┘
           │                      │                     │
    PostgreSQL 18          Valkey 9.0            MinIO / S3
    (RLS enabled)          (BSD-3 Redis fork)    (paid tiers only)
@@ -127,7 +127,7 @@ Per-stem gain faders, solo/mute, 12-stem waveform display. **SAIL v2** (Stem-Awa
 
 ## AI Co-Master Engineer
 
-**Claude Sonnet 4.6** integration via `claude_service.py`:
+**Claude Sonnet integration** via `claude_service.py` (model configurable; default `claude-sonnet-4-20250514`):
 - Natural language Intent Engine maps requests to bounded `ProcessingParams` deltas
 - 7 macro suggestions with confidence scores (JSON-validated, clamped 0–10)
 - Before/after mastering reports in plain language
@@ -150,7 +150,7 @@ Per-stem gain faders, solo/mute, 12-stem waveform display. **SAIL v2** (Stem-Awa
 | Database | PostgreSQL 18 with Row-Level Security on all tables |
 | Cache / Queue | Valkey 9.0 (BSD-3-Clause Redis fork) |
 | Object Storage | S3-compatible (MinIO in dev) · free tier = WASM-only, no S3 |
-| Provenance | Ed25519 · C2PA v2.2 · AudioSeal · Chromaprint · CBOR (RFC 7049) |
+| Provenance | Ed25519 · C2PA v2.2 · AudioSeal · Chromaprint · CBOR (RFC 8949) |
 | Separation | BS-RoFormer SW · MelBand RoFormer · auto-download via pip |
 | Distribution | DDEX ERN 4.3 · LabelGrid API · ISRC / UPC-EAN-13 |
 | Desktop / Plugin | Tauri 2.0 · JUCE 8 (VST3 / AU / AAX) |
@@ -207,7 +207,7 @@ docker compose -f docker-compose.gpu.yml up -d worker
 
 ## API Routes
 
-The backend exposes 19 API routers under `/api/v1/`.
+The backend exposes 18 mounted API routers under `/api/v1/`.
 
 | Router | Prefix | Auth | Description |
 |--------|--------|------|-------------|
@@ -229,7 +229,6 @@ The backend exposes 19 API routers under `/api/v1/`.
 | `whitelabel.py` | `/whitelabel` | JWT · Enterprise | White-label API key provisioning, partner branding config, usage metering |
 | `workspaces.py` | `/workspaces` | JWT · Studio+ | Multi-artist workspace management, collaborator roles, shared session access |
 | `score.py` | `/score` | Public (10 req/hr/IP) | Public RAIN Score endpoint — no auth required, returns 0-100 composite quality metric |
-| `waitlist.py` | `/waitlist` | Public | Beta waitlist registration |
 
 > **Auth tiers:** `Public` = no token required · `JWT` = any authenticated user · tier suffixes (Creator+, Artist+, etc.) = minimum subscription required.
 
@@ -239,7 +238,7 @@ The backend exposes 19 API routers under `/api/v1/`.
 
 | Tier | Price | Renders / mo | Key Features |
 |------|-------|-------------|--------------|
-| Casual | Free | Listen only | WASM mastering, real-time preview, RAIN Score |
+| Casual | Free | Preview only | Real-time WASM mastering preview, RAIN Score, no file export |
 | Creator | $9 | 50 downloads | Full-res export, WAV / FLAC / MP3, Simple Mode |
 | **Independent Artist** | **$29** | **10 renders** | **Stem separation, Claude AI (10/mo), Artist Identity Engine** |
 | Producer | $59 | 25 renders | DAW plugin, Distribution Intelligence, RAIN-CERT |
@@ -247,7 +246,7 @@ The backend exposes 19 API routers under `/api/v1/`.
 | Label / Distributor | $349 | 300 renders | Multi-artist roster, batch processing, LabelGrid direct |
 | Enterprise | Custom | Unlimited | Custom RainNet LoRA, white-label API, dedicated support |
 
-Annual billing: ~20% discount. Contact [engineering@thatguy-productions.com](mailto:engineering@thatguy-productions.com) for enterprise licensing.
+Annual billing: ~20% discount. Contact [philippusbolke@gmail.com](mailto:philippusbolke@gmail.com) for enterprise licensing.
 
 ---
 
@@ -319,11 +318,11 @@ RAIN-V6-AI-AUDIO-TRANSFORMATION-MASTERING-AND-DISTRIBUTION-INFRUSTRUCTURE/
 
 Proprietary — © 2026 ThatGuy Productions. All rights reserved.
 
-Contact [engineering@thatguy-productions.com](mailto:engineering@thatguy-productions.com) for licensing enquiries.
+Contact [philippusbolke@gmail.com](mailto:philippusbolke@gmail.com) for licensing enquiries.
 
 ---
 
-*RAIN v6 · Engine stamp: `RAIN v6 — BS-RoFormer 12-stem` · LLM advisory layer: `claude-sonnet-4-6` · Publisher: ThatGuy Productions*
+*RAIN v6 · Engine stamp: `RAIN v6 — BS-RoFormer 12-stem` · LLM advisory layer: configurable Claude Sonnet (`claude-sonnet-4-20250514` default) · Publisher: ThatGuy Productions*
 
 
 <img width="1652" height="830" alt="image" src="https://github.com/user-attachments/assets/49a5af79-dad5-4f27-83e5-0a1dca0d4f50" />
