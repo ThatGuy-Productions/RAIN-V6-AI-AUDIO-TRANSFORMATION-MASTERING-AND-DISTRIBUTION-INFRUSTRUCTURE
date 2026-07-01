@@ -182,5 +182,18 @@ def test_qc_18_checks():
     assert len(report.checks) == 18, f"QC has {len(report.checks)} checks, expected 18"
 
 
+# --- Rule #5: NORMALIZATION_VALIDATED gate closed by default ---
+
+def test_normalization_gate_closed_by_default():
+    """RainNet inference gate must be closed unless explicitly opened by env/sign-off."""
+    from app.core.config import Settings
+
+    settings = Settings(_env_file=None)
+    assert settings.RAIN_NORMALIZATION_VALIDATED is False, (
+        "RAIN_NORMALIZATION_VALIDATED must default to False. "
+        "RainNet inference only opens after explicit sign-off by Phil Bölke."
+    )
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
