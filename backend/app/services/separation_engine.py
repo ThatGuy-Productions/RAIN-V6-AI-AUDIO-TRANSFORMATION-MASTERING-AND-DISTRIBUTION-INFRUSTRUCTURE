@@ -20,7 +20,6 @@ from typing import Any
 
 import numpy as np
 import structlog
-import torch
 
 from app.core.config import settings
 
@@ -34,7 +33,9 @@ _KARAOKE_SLUG = "roformer-model-mel-roformer-karaoke-aufr33-viperx"
 _DEREVERB_SLUG = "roformer-model-melband-roformer-de-reverb-by-anvuew"
 
 
-def _get_device() -> torch.device:
+def _get_device():
+    """Return torch.device lazily so spectral/band-split fallback works without torch installed."""
+    import torch
     device_str = settings.BSROFORMER_DEVICE
     if device_str.startswith("cuda") and not torch.cuda.is_available():
         logger.warning("separation_cuda_unavailable", fallback="cpu")
@@ -61,6 +62,7 @@ def load_bsroformer_model(checkpoint_path: str | None = None, device: str | None
     _assert_enabled("RAIN-E620", "load_bsroformer_model")
 
     try:
+        import torch
         from bs_roformer import MODEL_REGISTRY, get_model_from_config
         from ml_collections import ConfigDict
         import yaml
@@ -100,6 +102,8 @@ def load_karaoke_model(device: str | None = None) -> dict:
     _assert_enabled("RAIN-E620", "load_karaoke_model")
 
     try:
+        import torch
+        import torch
         from mel_band_roformer import MODEL_REGISTRY, get_model_from_config
         from ml_collections import ConfigDict
         import yaml
@@ -192,6 +196,7 @@ def _demix(handle: dict, audio: np.ndarray, sr: int) -> dict[str, np.ndarray]:
     if audio.ndim == 1:
         audio = np.stack([audio, audio])  # mono → stereo
 
+    import torch
     with torch.no_grad():
         waveforms = demix(
             handle["config"],
@@ -256,8 +261,9 @@ def run_pass_3_drums(handle: Any, drums: np.ndarray, sr: int) -> dict[str, np.nd
 
     t0 = time.monotonic()
 
-    # Spectral band splitting fallback (no ML model needed)
-    # This is a placeholder until LarsNet is pip-installable
+    # Spectral band splitting fallback (no ML model needed).
+    # This is the official CPU-safe fallback for drum sub-separation when a
+    # dedicated LarsNet/DrumSep model is unavailable.
     from scipy.signal import butter, sosfilt
 
     def bandpass(audio_mono: np.ndarray, low: float, high: float, sr: int) -> np.ndarray:
