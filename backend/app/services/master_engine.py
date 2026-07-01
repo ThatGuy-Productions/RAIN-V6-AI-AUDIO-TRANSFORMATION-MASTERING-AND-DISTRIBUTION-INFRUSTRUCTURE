@@ -720,6 +720,19 @@ def export_mp3(audio: NDArray[np.float64], sr: int, output_path: str) -> None:
         frame_rate=44100,
         channels=audio_44.shape[1],
     )
+
+    # Prefer system ffmpeg, but allow the Python imageio-ffmpeg wheel to supply
+    # an executable in virtualenv/test environments where ffmpeg is not installed
+    # on PATH. This keeps MP3 packaging testable without weakening production.
+    import shutil
+    if shutil.which("ffmpeg") is None:
+        try:
+            import imageio_ffmpeg
+            AudioSegment.converter = imageio_ffmpeg.get_ffmpeg_exe()
+        except Exception:
+            # Let pydub raise the original ffmpeg error with full context.
+            pass
+
     seg.export(output_path, format="mp3", bitrate="320k", codec="libmp3lame")
 
 
