@@ -1,0 +1,14 @@
+capability,status,evidence,launch_blocker,effort
+Build and CI,blocked_unknown,"Workflow exists; fresh run not executed",yes,M
+Mastering route,implemented_unverified,"backend/app/api/routes/master.py; no fixture run",yes,M
+Session persistence,partial_prototype,"master.py documents in-memory _sessions",yes,L
+Audio QC and export,implemented_unverified,"No current artifact independently inspected",yes,M
+RAIN-CERT,implemented_unverified,"Functions exist; tamper tests not run",if marketed,M
+Stripe checkout,partial_mock,"billing.py returns cs_mock_dev if secret missing",yes if billing enabled,S/M
+Stripe webhook,implemented_unverified,"Signature validation exists; idempotency unproven",yes if billing enabled,M
+LabelGrid,implemented_unverified,"/v1 base and custom payload; contract not tested",yes for automated delivery,L
+Release status,implemented_unverified,"Local record may be created when submission errors/skips",yes for delivery claims,M
+Identifiers,implemented_unverified,"UPC prefix defaults to 000000; authority unverified",yes for real releases,S/M
+Production configuration,partial,"Only some defaults rejected in production",yes if enabled features,S/M
+Model availability,configuration_dependent,"Feature flags and checkpoint paths need runtime validation",if advertised,M
+Backup and restore,blocked_unknown,"No restore test observed",yes for durable production,L
